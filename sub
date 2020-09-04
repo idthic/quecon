@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+## @fn make-jobdir
+##   @var[out] jobdir
+function make-jobdir {
+  jobdir=
+  local jobdir_base=~/.submit/jobs
+  [[ -d $jobdir_base ]] || mkdir -p "$jobdir_base"
+  local date=$(date +%Y%m%d-%H%M%S)
+  local index=0
+  for ((index=0;index<100;index++)); do
+    printf -v jobdir %s/%s-%02d "$jobdir_base" "$date" "$index"
+    mkdir "$jobdir" 2>/dev/null && return 0
+  done
+  jobdir=
+  echo "sub: failed to create job directory" >&2
+  return 1
+}
+
+## @fn read-args args...
+##   @var[out] flags
+##   @var[out] command
+##   @var[out] range
+function read-args {
+  flags= command= range=
+  while (($#)); do
+    local arg=$1; shift
+    if [[ $arg == -* ]]; then
+      case $arg in
+      (-c) flags+=c ;;
+      (-r) range=$1; shift ;;
+      (*)
+        echo "sub: unrecognized option '$arg'" >&2
+        flags+=E ;;
+      esac
+    elif [[ ! $command ]]; then
+      command=$arg
+    else
+      echo "sub: command is already specified." >&2
+      flags+=E
+    fi
+  done
+  if [[ ! $command ]]; then
+    echo "sub: command is not specified." >&2
+    flags+=E
+  fi
+  [[ $flags != *E* ]]
+}
+
+function main {
+  local command flags
+  read-args "$@" || return 2
+
+  # Loop settings
+  local range_{rep=,beg=0,end=1,cpu=1}
+  if [[ $range ]]; then
+    local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+)?'
+    if ! [[ $range =~ $rex ]]; then
+      echo "sub: invalid range spec '-r $range'." >&2
+      return 2
+    fi
+    range_rep=${BASH_REMATCH[1]%=}
+    range_beg=${BASH_REMATCH[2]%:}
+    range_end=${BASH_REMATCH[3]}
+    range_cpu=${BASH_REMATCH[4]#/}
+    [[ $range_beg ]] || range_beg=0
+    [[ $range_cpu ]] || range_cpu=1
+  fi
+  
+  local batch_size=$(((range_end-range_beg+range_cpu-1)/range_cpu))
+  local ijob=$range_beg
+  for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
+    local beg=$ijob end=$((ijob+batch_size))
+    ((end>range_end)) && end=$range_end
+    ((beg<end)) || break
+
+    local jobdir
+    make-jobdir || return 1
+
+    # Copy executable
+    local command1=$command
+    if [[ $flags == *c* ]]; then
+      local cmd=${command%%[$IFS]*}
+      local fcmd=$jobdir/cmd.sh
+      if [[ -x $cmd ]] && cp -L "$cmd" "$fcmd"; then
+        command1=$fcmd${command:${#cmd}}
+      else
+        "sub: failed to copy the file '$cmd'." >&2
+        return 1
+      fi
+    fi
+
+    local q=\' Q="'\''"
+    local fjob=$jobdir/job.sh
+    {
+      echo '#!/usr/bin/env bash'
+      echo "HOME='${HOME//$q/$Q}'"
+      echo 'cd "$HOME"'
+      echo ". $HOME/.bashrc"
+      echo "cd '${PWD//$q/$Q}'"
+      echo
+      echo "CPUSUB_COMMAND='${command1//$q/$Q}'"
+      echo "CPUSUB_REPLACE='${range_rep//$q/$Q}'"
+      echo 'export CPUSUB_INDEX'
+      echo "for CPUSUB_INDEX in {$beg..$((end-1))}; do"
+      echo '  if [[ $CPUSUB_REPLACE ]]; then'
+      echo '    eval "${CPUSUB_COMMAND//$CPUSUB_REPLACE/$CPUSUB_INDEX}"'
+      echo '  else'
+      echo '    eval "$CPUSUB_COMMAND"'
+      echo '  fi'
+      echo 'done'
+    } > "$fjob"
+
+    local fsub=$jobdir/sub.sh
+    {
+      echo '#!/usr/bin/env bash'
+      echo "srun -n 1 $fjob"
+      echo "echo 1 > $jobdir/complete.mark"
+    } > "$fsub"
+
+    chmod +x "$fjob" "$fsub"
+
+    if [[ ! $range_rep && $beg == 0 && $end == 1 ]]; then
+      echo "submit: $command"
+    else
+      echo "submit: $command (${range_rep:+$range_rep=}$beg:$end)"
+    fi
+    (cd "$jobdir"; sbatch -N 1 -p amd_256 sub.sh)
+  done
+}
+
+main "$@"
