@@ -13,7 +13,7 @@ function make-jobdir {
     mkdir "$jobdir" 2>/dev/null && return 0
   done
   jobdir=
-  echo "sub: failed to create job directory" >&2
+  echo "idtsub: failed to create job directory" >&2
   return 1
 }
 
@@ -30,18 +30,18 @@ function read-args {
       (-c) flags+=c ;;
       (-r) range=$1; shift ;;
       (*)
-        echo "sub: unrecognized option '$arg'" >&2
+        echo "idtsub: unrecognized option '$arg'" >&2
         flags+=E ;;
       esac
     elif [[ ! $command ]]; then
       command=$arg
     else
-      echo "sub: command is already specified." >&2
+      echo "idtsub: command is already specified." >&2
       flags+=E
     fi
   done
   if [[ ! $command ]]; then
-    echo "sub: command is not specified." >&2
+    echo "idtsub: command is not specified." >&2
     flags+=E
   fi
   [[ $flags != *E* ]]
@@ -56,7 +56,7 @@ function main {
   if [[ $range ]]; then
     local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+)?'
     if ! [[ $range =~ $rex ]]; then
-      echo "sub: invalid range spec '-r $range'." >&2
+      echo "idtsub: invalid range spec '-r $range'." >&2
       return 2
     fi
     range_rep=${BASH_REMATCH[1]%=}
@@ -85,7 +85,7 @@ function main {
       if [[ -x $cmd ]] && cp -L "$cmd" "$fcmd"; then
         command1=$fcmd${command:${#cmd}}
       else
-        "sub: failed to copy the file '$cmd'." >&2
+        "idtsub: failed to copy the file '$cmd'." >&2
         return 1
       fi
     fi
@@ -99,14 +99,14 @@ function main {
       echo ". $HOME/.bashrc"
       echo "cd '${PWD//$q/$Q}'"
       echo
-      echo "CPUSUB_COMMAND='${command1//$q/$Q}'"
-      echo "CPUSUB_REPLACE='${range_rep//$q/$Q}'"
-      echo 'export CPUSUB_INDEX'
-      echo "for CPUSUB_INDEX in {$beg..$((end-1))}; do"
-      echo '  if [[ $CPUSUB_REPLACE ]]; then'
-      echo '    eval "${CPUSUB_COMMAND//$CPUSUB_REPLACE/$CPUSUB_INDEX}"'
+      echo "IDTSUB_COMMAND='${command1//$q/$Q}'"
+      echo "IDTSUB_REPLACE='${range_rep//$q/$Q}'"
+      echo 'export IDTSUB_INDEX'
+      echo "for IDTSUB_INDEX in {$beg..$((end-1))}; do"
+      echo '  if [[ $IDTSUB_REPLACE ]]; then'
+      echo '    eval "${IDTSUB_COMMAND//$IDTSUB_REPLACE/$IDTSUB_INDEX}"'
       echo '  else'
-      echo '    eval "$CPUSUB_COMMAND"'
+      echo '    eval "$IDTSUB_COMMAND"'
       echo '  fi'
       echo 'done'
     } > "$fjob"
