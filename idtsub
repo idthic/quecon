@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+idtsub_tmpdir_base=/dev/shm/$UID.$USER
+
 ## @fn make-jobdir
 ##   @var[out] jobdir
 function make-jobdir {
@@ -28,6 +30,7 @@ function read-args {
     if [[ $arg == -* ]]; then
       case $arg in
       (-c) flags+=c ;;
+      (-t) flags+=t ;;
       (-r) range=$1; shift ;;
       (*)
         echo "idtsub: unrecognized option '$arg'" >&2
@@ -114,7 +117,15 @@ function main {
     local fsub=$jobdir/sub.sh
     {
       echo '#!/usr/bin/env bash'
+      if [[ $flags == *t* ]]; then
+        echo "export IDTSUB_TMPDIR=$idtsub_tmpdir_base/${jobdir##*/}"
+        echo '[[ -d $IDTSUB_TMPDIR ]] ||'
+        echo '  (umask 077; rm -rf "$IDTSUB_TMPDIR"; mkdir -p "$IDTSUB_TMPDIR")'
+      fi
       echo "srun -n 1 $fjob"
+      if [[ $flags == *t* ]]; then
+        echo 'rm -rf "$IDTSUB_TMPDIR"'
+      fi
       echo "echo 1 > $jobdir/complete.mark"
     } > "$fsub"
 
