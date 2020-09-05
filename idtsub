@@ -179,35 +179,37 @@ function cmd:submit {
 }
 
 function cmd:stat/list {
-  local flags=C
+  local flags= #C
 
   echo 'INDE JOB_ID             STAT   COMMAND'
 
-  local dir index=0
-  for dir in "$idtsub_data_path"/jobs/*; do
+  local jobdir index=0
+  for jobdir in "$idtsub_data_path"/jobs/????????-??????-??; do
     ((index++))
-    local job_id=${dir##*/}
+    local job_id=${jobdir##*/}
     local stat=- fail=0 command=- cwd=-
-    [[ $flags == *C* && -s $dir/complete.mark ]] && continue
+    [[ $flags == *C* && -s $jobdir/complete.mark ]] && continue
 
-    if [[ -s $dir/stat.sh ]]; then
-      source "$dir/stat.sh"
-    elif [[ -s $dir/complete.mark ]]; then
+    if [[ -s $jobdir/stat.sh ]]; then
+      source "$jobdir/stat.sh"
+    elif [[ -s $jobdir/complete.mark ]]; then
       stat=C
     fi
 
     ((fail)) && stat=F$fail
-    stat=$stat'      '; stat=${stat::6}
+    local sgr_stat=
     case $stat in
-    (F*) stat=$'\e[1;91m'$stat$'\e[m' ;;
-    (C*) stat=$'\e[94m'$stat$'\e[m' ;;
-    (R*) stat=$'\e[1;92m'$stat$'\e[m' ;;
-    (P*) stat=$'\e[32m'$stat$'\e[m' ;;
+    (F*) sgr_stat=$'\e[1;91m' ;;
+    (C*) [[ $stat == C ]] && stat=COMP
+         sgr_stat=$'\e[94m' ;;
+    (R*) sgr_stat=$'\e[1;92m' ;;
+    (P*) sgr_stat=$'\e[32m' ;;
     esac
 
-    local s_index
-    printf -v s_index '%04d' "$index"
-    echo "$s_index $job_id $stat $command"
+    printf '%04d %-18s %s%-6s%s %s\n' \
+           "$index" "$job_id" \
+           "$sgr_stat" "$stat" $'\e[m' \
+           "$command"
   done
 }
 
@@ -219,8 +221,8 @@ function idtsub/jobdir-eval {
 
   local index=$((10#$1)) command=$2
   local jobdir i=0
-  for jobdir in "$idtsub_data_path"/jobs/*; do
-    if ((i++==index)); then
+  for jobdir in "$idtsub_data_path"/jobs/????????-??????-??; do
+    if ((++i==index)); then
       (cd "$jobdir"; eval -- "$command")
       return
     fi
