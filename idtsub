@@ -6,9 +6,22 @@ idtsub_tmpdir_base=/dev/shm/$UID.$USER
 
 function is-function { declare -f "$1" &>/dev/null; }
 
-## @fn make-jobdir
+function quote-words {
+  local word out= q=\' Q="'\''" specialchars=$IFS$'|&;()[]{}<>\\`$?*~!^#'$q\"
+  for word; do
+    if [[ $word == *$'\n'* ]]; then
+      printf -v word %q "$word"
+    elif [[ $word == *["$specialchars"]* ]]; then
+      word=$q${word//$q/$Q}$q
+    fi
+    out=${out:+$out' '}$word
+  done
+  ret=$out
+}
+
+## @fn cmd:submit/make-jobdir
 ##   @var[out] jobdir
-function make-jobdir {
+function cmd:submit/make-jobdir {
   jobdir=
   local jobdir_base=$idtsub_data_path/jobs
   [[ -d $jobdir_base ]] || mkdir -p "$jobdir_base"
@@ -23,13 +36,18 @@ function make-jobdir {
   return 1
 }
 
-## @fn read-args args...
+## @fn cmd:submit/readargs args...
 ##   @var[out] flags
+##     c   copy executable
+##     t   create IDTSUB_TMPDIR
+##     r   set range
+##     E   error
 ##   @var[out] command
-##   @var[out] range
+##   @var[out] range_{rep,beg,end,cpu}
 ##   @var[out] job_name
-function read-args {
-  flags= command= range= job_name=
+function cmd:submit/readargs {
+  flags= command= job_name=
+  local range
   while (($#)); do
     local arg=$1; shift
     if [[ $arg == -* ]]; then
@@ -37,7 +55,7 @@ function read-args {
       (-c) flags+=c ;;
       (-t) flags+=t ;;
       (-J) job_name=$1; shift ;;
-      (-r) range=$1; shift ;;
+      (-r) flags+=r; range=$1; shift ;;
       (*)
         echo "idtsub: unrecognized option '$arg'" >&2
         flags+=E ;;
@@ -53,20 +71,17 @@ function read-args {
     echo "idtsub: command is not specified." >&2
     flags+=E
   fi
-  [[ $flags != *E* ]]
-}
 
-function cmd:submit {
-  local flags command range job_name
-  read-args "$@" || return 2
-
-  # Loop settings
-  local range_{rep=,beg=0,end=1,cpu=1}
+  # parse range
+  range_rep=
+  range_beg=0
+  range_end=1
+  range_cpu=1
   if [[ $range ]]; then
     local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+)?'
     if ! [[ $range =~ $rex ]]; then
       echo "idtsub: invalid range spec '-r $range'." >&2
-      return 2
+      flags+=E
     fi
     range_rep=${BASH_REMATCH[1]%=}
     range_beg=${BASH_REMATCH[2]%:}
@@ -76,11 +91,28 @@ function cmd:submit {
     [[ $range_cpu ]] || range_cpu=1
   fi
 
+  [[ $flags != *E* ]]
+}
+
+function cmd:submit {
+  local q=\' Q="'\''"
+
+  local flags command job_name
+  local range_{rep=,beg=0,end=1,cpu=1}
+  cmd:submit/readargs "$@" || return 2
+
+  local submit_hash
+  printf -v submit_hash '#%04X' "$RANDOM"
+  local date=$(date +"%F %T %Z")
+  local ret; quote-words idtsub submit "$@"
+  echo "[$date] $submit_hash $ret" >> "$idtsub_data_path"/submit.log
+  echo "[$date] $submit_hash PWD='${PWD//$q/$Q}'" >> "$idtsub_data_path"/submit.log
+
   # Job name
   [[ $job_name ]] || job_name=$command
   
   local batch_size=$(((range_end-range_beg+range_cpu-1)/range_cpu))
-  local ijob=$range_beg
+  local ijob=$range_beg icpu=0
   for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
     local beg=$ijob end=$((ijob+batch_size))
     ((end>range_end)) && end=$range_end
@@ -88,7 +120,7 @@ function cmd:submit {
     ((count>0)) || break
 
     local jobdir
-    make-jobdir || return 1
+    cmd:submit/make-jobdir || return 1
 
     # Copy executable
     local command1=$command
@@ -103,7 +135,6 @@ function cmd:submit {
       fi
     fi
 
-    local q=\' Q="'\''"
     local fjob=$jobdir/job.sh
     local flog=$jobdir/stat.log
     local fstat=$jobdir/stat.sh
@@ -157,18 +188,23 @@ function cmd:submit {
 
     chmod +x "$fjob" "$fsub"
 
+    local date=$(date +"%F %T %Z")
     local job_range_suffix=
     local cmd_range_suffix=
-    if [[ $range_rep || $beg != 0 && $end != 1 ]]; then
+    local log_range_suffix=
+    if [[ $flags == *r* ]]; then
+      log_range_suffix=" (range $beg:$end)"
       job_range_suffix="[$beg:$end]"
       cmd_range_suffix=" (${range_rep:+$range_rep=}$beg:$end)"
     fi
-
-    echo "[$(date +"%F %T %Z")] IDTSUB submit" >> "$flog"
-    echo "command='${command//$q/$Q}$cmd_range_suffix'" >> "$fstat"
-    echo "cwd='${PWD//$q/$Q}'" >> "$fstat"
-    echo "stat=P" >> "$fstat"
     echo "submit: $command$cmd_range_suffix"
+    echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$idtsub_data_path"/submit.log
+    echo "[$date] IDTSUB submit" >> "$flog"
+    {
+      echo "command='${command//$q/$Q}$cmd_range_suffix'"
+      echo "cwd='${PWD//$q/$Q}'"
+      echo "stat=P"
+    } >> "$fstat"
     if ! (cd "$jobdir"; sbatch -N 1 -p amd_256 -J "$job_name$job_range_suffix" sub.sh); then
       echo "idtsub:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] IDTSUB submit fail" >> "$flog"
