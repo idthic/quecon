@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 
+idtsub_prefix=~/.opt/idt
+idtsub_data_path=$idtsub_prefix/share/idtsub
 idtsub_tmpdir_base=/dev/shm/$UID.$USER
+
+function is-function { declare -f "$1" &>/dev/null; }
 
 ## @fn make-jobdir
 ##   @var[out] jobdir
 function make-jobdir {
   jobdir=
-  local jobdir_base=~/.submit/jobs
+  local jobdir_base=$idtsub_data_path/jobs
   [[ -d $jobdir_base ]] || mkdir -p "$jobdir_base"
   local date=$(date +%Y%m%d-%H%M%S)
   local index=0
@@ -52,7 +56,7 @@ function read-args {
   [[ $flags != *E* ]]
 }
 
-function main {
+function cmd:submit {
   local flags command range job_name
   read-args "$@" || return 2
 
@@ -80,7 +84,8 @@ function main {
   for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
     local beg=$ijob end=$((ijob+batch_size))
     ((end>range_end)) && end=$range_end
-    ((beg<end)) || break
+    local count=$((end-beg))
+    ((count>0)) || break
 
     local jobdir
     make-jobdir || return 1
@@ -100,6 +105,8 @@ function main {
 
     local q=\' Q="'\''"
     local fjob=$jobdir/job.sh
+    local flog=$jobdir/stat.log
+    local fstat=$jobdir/stat.sh
     {
       echo '#!/usr/bin/env bash'
       echo "HOME='${HOME//$q/$Q}'"
@@ -111,17 +118,20 @@ function main {
       echo "IDTSUB_REPLACE='${range_rep//$q/$Q}'"
       echo 'export IDTSUB_INDEX'
       echo "for IDTSUB_INDEX in {$beg..$((end-1))}; do"
-      echo '  if [[ $IDTSUB_REPLACE ]]; then'
-      echo '    eval "${IDTSUB_COMMAND//$IDTSUB_REPLACE/$IDTSUB_INDEX}"'
-      echo '  else'
-      echo '    eval "$IDTSUB_COMMAND"'
-      echo '  fi'
+      echo '  _idtsub_command=$IDTSUB_COMMAND'
+      echo '  [[ $IDTSUB_REPLACE ]] &&'
+      echo '    _idtsub_command=${IDTSUB_COMMAND//$IDTSUB_REPLACE/$IDTSUB_INDEX}'
+      echo '  echo "[$(date +"%F %T %Z")] $_idtsub_command" >> "$flog"'
+      echo "  echo \"stat=R(\$((IDTSUB_INDEX-$beg+1))/$count)\" >> \"$fstat\""
+      echo '  eval "$_idtsub_command" || echo "((fail++))" >> "$fstat"'
       echo 'done'
     } > "$fjob"
 
     local fsub=$jobdir/sub.sh
     {
       echo '#!/usr/bin/env bash'
+      echo 'echo "[$(date +"%F %T %Z")] IDTSUB run" >> "$flog"'
+      echo 'echo "stat=R" >> "$fstat"'
       if [[ $flags == *t* ]]; then
         echo "export IDTSUB_TMPDIR=$idtsub_tmpdir_base/${jobdir##*/}"
         echo '[[ -d $IDTSUB_TMPDIR ]] ||'
@@ -131,19 +141,113 @@ function main {
       if [[ $flags == *t* ]]; then
         echo 'rm -rf "$IDTSUB_TMPDIR"'
       fi
-      echo "echo 1 > $jobdir/complete.mark"
+      echo 'echo "[$(date +"%F %T %Z")] IDTSUB complete" >> "$flog"'
+      echo 'echo "stat=C" >> "$fstat"'
+      echo 'echo 1 >> "$jobdir/complete.mark"'
     } > "$fsub"
 
     chmod +x "$fjob" "$fsub"
 
-    if [[ ! $range_rep && $beg == 0 && $end == 1 ]]; then
-      echo "submit: $command"
-      (cd "$jobdir"; sbatch -N 1 -p amd_256 -J "$job_name" sub.sh)
-    else
-      echo "submit: $command (${range_rep:+$range_rep=}$beg:$end)"
-      (cd "$jobdir"; sbatch -N 1 -p amd_256 -J "$job_name[$beg:$end]" sub.sh)
+    local job_range_suffix=
+    local cmd_range_suffix=
+    if [[ $range_rep || $beg != 0 && $end != 1 ]]; then
+      job_range_suffix="[$beg:$end]"
+      cmd_range_suffix=" (${range_rep:+$range_rep=}$beg:$end)"
+    fi
+
+    echo "[$(date +"%F %T %Z")] IDTSUB submit" >> "$flog"
+    echo "command='${command//$q/$Q}$cmd_range_suffix'" >> "$fstat"
+    echo "stat=P" >> "$fstat"
+    echo "submit: $command$cmd_range_suffix"
+    if ! (cd "$jobdir"; sbatch -N 1 -p amd_256 -J "$job_name$job_range_suffix" sub.sh); then
+      echo "idtsub:${jobdir##*/}: failed to submit" >&2
+      echo "[$(date +"%F %T %Z")] IDTSUB submit fail" >> "$flog"
+      echo "stat=F" >> "$fstat"
+      return 1
     fi
   done
 }
 
-main "$@"
+function cmd:list {
+  local flags=C
+
+  local dir index=0
+  for dir in "$idtsub_data_path"/jobs/*; do
+    ((index++))
+    local job_id=${dir##*/}
+    local stat=- fail=0 command=-
+    [[ $flags == *C* && -s $dir/complete.mark ]] && continue
+
+    if [[ -s $dir/stat.sh ]]; then
+      source "$dir/stat.sh"
+    elif [[ -s $dir/complete.mark ]]; then
+      stat=C
+    fi
+
+    ((fail)) && stat=F$fail
+    stat=$stat'      '; stat=${stat::6}
+    case $stat in
+    (F*) stat=$'\e[1;91m'$stat$'\e[m' ;;
+    (C*) stat=$'\e[94m'$stat$'\e[m' ;;
+    (R*) stat=$'\e[1;92m'$stat$'\e[m' ;;
+    (P*) stat=$'\e[32m'$stat$'\e[m' ;;
+    esac
+
+    local s_index
+    printf -v s_index '%04d' "$index"
+    echo "$s_index $job_id $stat $command"
+  done
+}
+
+function idtsub/jobdir-eval {
+  if [[ ! $1 || ${1//[0-9]} ]]; then
+    echo "idtsub: invalid job_index '$1'." >&2
+    return 1
+  fi
+
+  local index=$((10#$1)) command=$2
+  local jobdir i=0
+  for jobdir in "$idtsub_data_path"/jobs/*; do
+    if ((i++==index)); then
+      (cd "$jobdir"; eval -- "$command")
+      return
+    fi
+  done
+  echo "idtsub: job_index '$1' not found." >&2
+  return 1
+}
+
+function cmd:out {
+  if [[ $1 ]]; then
+    idtsub/jobdir-eval "$1" '
+      local option=
+      [[ -s complete.mark ]] || option=-f
+      tail $option slurm-*.out'
+  else
+    echo "usage: idtjob out JOB_INDEX" >&2
+    return 2
+  fi
+}
+function cmd:log {
+  if [[ $1 ]]; then
+    idtsub/jobdir-eval "$1" 'cat stat.log'
+  else
+    echo "usage: idtjob log JOB_INDEX" >&2
+    return 2
+  fi
+}
+function cmd:ls {
+  if [[ $1 ]]; then
+    idtsub/jobdir-eval "$1" 'ls -la'
+  else
+    echo "usage: idtjob ls JOB_INDEX" >&2
+    return 2
+  fi
+}
+
+if is-function "cmd:$1"; then
+  "cmd:$@"
+else
+  echo "idtsub: unknown subcommand '$1'" >&2
+  exit 2
+fi
