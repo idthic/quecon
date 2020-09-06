@@ -1,12 +1,16 @@
-# `idtsub`
-
-## Usage
+# idtsub
 
 ```
-idtsub [OPTIONS] COMMAND
+idtsub SUBCMD ...
 ```
 
-## Options
+## 1. idtsub submit
+
+```
+idtsub submit [-ct | -r RANGE] COMMAND
+```
+
+### Options
 
 - `-c`
 
@@ -25,3 +29,17 @@ idtsub [OPTIONS] COMMAND
   parallel jobs.  The default value for `BEGIN` is 0.  The default
   value for `NPROC` is 1.  When `REP` is specified, the matching
   string in `COMMAND` is replaced by the value of `IDTSUB_INDEX`.
+
+## 2. idtsub stat
+
+```
+idtsub [stat]
+idtsub stat JOB_INDEX [TYPE]
+```
+
+### TYPE
+
+- `log` (default)
+- `out`
+- `ls`
+- `stat.sh`, `sub.sh`, `job.sh`, `cmd.sh`
