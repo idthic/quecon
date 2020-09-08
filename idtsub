@@ -191,13 +191,13 @@ function cmd:submit {
 function cmd:stat/list {
   local flags= #C
 
-  echo 'INDE JOB_ID             STAT   COMMAND'
+  echo 'INDE JOB_ID             NODE       STAT   COMMAND'
 
   local jobdir index=0
   for jobdir in "$idtsub_data_path"/jobs/????????-??????-*; do
     ((index++))
     local job_id=${jobdir##*/}
-    local stat=- fail=0 command=- cwd=-
+    local stat=- fail=0 command=- cwd=- node=-
     [[ $flags == *C* && -s $jobdir/complete.mark ]] && continue
 
     if [[ -s $jobdir/stat.sh ]]; then
@@ -216,8 +216,8 @@ function cmd:stat/list {
     (P*) sgr_stat=$'\e[32m' ;;
     esac
 
-    printf '%04d %-18s %s%-6s%s %s\n' \
-           "$index" "$job_id" \
+    printf '%04d %-18s %-10.10s %s%-6s%s %s\n' \
+           "$index" "$job_id" "$node" \
            "$sgr_stat" "$stat" $'\e[m' \
            "$command"
   done
@@ -250,11 +250,12 @@ function cmd:stat {
   case $2 in
   (''|log)
     idtsub/jobdir-eval "$1" 'cat stat.log' ;;
-  (out)
-    idtsub/jobdir-eval "$1" '
-      local option=
-      [[ -s complete.mark ]] || option=-f
-      tail $option -n +1 sub.out' ;;
+  (out|tail)
+    local -a tail_options=()
+    tail_options=()
+    [[ -s complete.mark ]] || tail_options+=(-f)
+    [[ $2 == out ]] && tail_options+=(-n +1)
+    idtsub/jobdir-eval "$1" 'tail "${tail_options[@]}" sub.out' ;;
   (stat.sh|sub.sh|job.sh|cmd.sh)
     idtsub/jobdir-eval "$1" 'cat '"$2" ;;
   (ls)
@@ -265,11 +266,24 @@ function cmd:stat {
   esac
 }
 
-if (($#==0)); then
-  cmd:stat
-elif is-function "cmd:$1"; then
-  "cmd:$@"
-else
+function main {
+  if (($#==0)); then
+    cmd:stat
+    return
+  elif is-function "cmd:$1"; then
+    "cmd:$@"
+    return
+  elif local rex='^s[0-9]+$'; [[ $1 =~ $rex ]]; then
+    cmd:stat "${1:1}" "${@:2}"
+    return
+  fi
+
+  # case $1 in
+  # (*)
+  # esac
+
   echo "idtsub: unknown subcommand '$1'" >&2
   exit 2
-fi
+}
+
+main "$@"
