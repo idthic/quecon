@@ -7,6 +7,17 @@ idtsub_tmpdir_base=/dev/shm/$UID.$USER
 function is-function { declare -f "$1" &>/dev/null; }
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
 
+function string#seconds-to-human {
+  local time=$1
+  if ((time<3600)); then
+    printf -v ret '%02dm%02ds' "$((time/60%60))" "$((time%60))"
+  elif ((time<360000)); then
+    printf -v ret '%02dh%02dm' "$((time/3600))" "$((time/60%60))"
+  else
+    printf -v ret '%02dd%02dh' "$((time/3600/24))" "$((time/3600%24))"
+  fi
+}
+
 function quote-words {
   local word out= q=\' Q="'\''" specialchars=$IFS$'|&;()[]{}<>\\`$?*~!^#'$q\"
   for word; do
@@ -202,7 +213,7 @@ function cmd:submit {
 }
 
 function cmd:stat/list {
-  local flags= #C
+  local flags=
 
   echo 'INDE JOB_ID             NODE       STAT   COMMAND'
 
@@ -210,7 +221,7 @@ function cmd:stat/list {
   for jobdir in "$idtsub_data_path"/jobs/????????-??????-*; do
     ((index++))
     local job_id=${jobdir##*/}
-    local stat=- fail=0 command=- cwd=- node=-
+    local stat=- fail=0 command=- cwd=- node=- time_start= time_end=
     [[ $flags == *C* && -s $jobdir/complete.mark ]] && continue
 
     if [[ -s $jobdir/stat.sh ]]; then
@@ -219,20 +230,31 @@ function cmd:stat/list {
       stat=C
     fi
 
-    ((fail)) && stat=F$fail
     local sgr_stat=
-    case $stat in
-    (F*) sgr_stat=$'\e[1;91m' ;;
-    (C*) [[ $stat == C ]] && stat=COMP
-         sgr_stat=$'\e[94m' ;;
-    (R*) sgr_stat=$'\e[1;92m' ;;
-    (P*) sgr_stat=$'\e[32m' ;;
-    esac
+    if ((fail)); then
+      [[ $stat == C* ]] && stat=F$fail
+      sgr_stat=$'\e[1;91m'
+    else
+      case $stat in
+      (F*) sgr_stat=$'\e[1;91m' ;;
+      (C*) [[ $stat == C ]] && stat=COMP
+           sgr_stat=$'\e[94m' ;;
+      (R*) sgr_stat=$'\e[1;92m' ;;
+      (P*) [[ $stat == P ]] && stat=PEND
+           sgr_stat=$'\e[32m' ;;
+      esac
+    fi
 
-    printf '%04d %-18s %-10.10s %s%-6s%s %s\n' \
+    local time=-
+    if [[ $time_start ]]; then
+      [[ $time_end ]] || time_end=$(date +%s)
+      local ret; string#seconds-to-human $((time_end-time_start)); time=$ret
+    fi
+
+    printf '%04d %-18s %-10.10s %s%-6s%s %-6s %s\n' \
            "$index" "$job_id" "$node" \
            "$sgr_stat" "$stat" $'\e[m' \
-           "$command"
+           "$time" "$command"
   done
 }
 
