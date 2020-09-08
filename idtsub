@@ -6,6 +6,7 @@ idtsub_tmpdir_base=/dev/shm/$UID.$USER
 
 function is-function { declare -f "$1" &>/dev/null; }
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
+function mkpd { [[ $1 == ?*/* ]] && mkd "${1%/*}"; }
 
 function string#seconds-to-human {
   local time=$1
@@ -46,6 +47,34 @@ function cmd:submit/make-jobdir {
   jobdir=
   echo "idtsub: failed to create job directory" >&2
   return 1
+}
+
+## @fn cmd:submit/save-binary src lnk
+##   指定した名前の実行ファイルを PATH から探索して、
+##   DATA_PATH/jobs/bin に hash 値と共にコピーします。
+##   更に其処への相対パスでのシンボリックリンクを lnk に作成します。
+##   lnk は DATA_PATH/jobs/XXX/bin/YYY の形式であると想定します。
+function cmd:submit/save-binary {
+  local src=$1 dst=$2
+  local bin_path
+  if ! bin_path=$(type -p "$src"); then
+    "idtsub: failed to find the binary '$src'." >&2
+    return 1
+  fi
+
+  if type -p sha256sum &>/dev/null; then
+    bin_hash=$(sha256sum "$bin_path" | awk '{print $1}')
+  elif type -p md5sum &>/dev/null; then
+    bin_hash=$(md5sum "$bin_path" | awk '{print $1}')
+  fi
+
+  local cache=$idtsub_data_path/jobs/bin/${src##*/}.$bin_hash
+  if [[ ! -f $cache ]]; then
+    mkpd "$cache"
+    cp -L "$bin_path" "$cache"
+  fi
+  mkpd "$dst"
+  ln -s "../../bin/${cache##*/}" "$dst"
 }
 
 ## @fn cmd:submit/readargs args...
@@ -149,14 +178,9 @@ function cmd:submit {
         return 1
       fi
     fi
-    local bin_name bin_path
+    local bin_name ret
     for bin_name in "${bin_names[@]}"; do
-      if ! bin_path=$(type -p "$bin_name"); then
-        "idtsub: failed to copy the binary '$bin_name'." >&2
-        return 1
-      fi
-      mkd "$jobdir/bin"
-      cp -L "$bin_path" "$jobdir/bin/${bin_name##*/}"
+      cmd:submit/save-binary "$bin_name" "$jobdir/bin/${bin_name##*/}" || return 1
     done
 
     local fjob=$jobdir/job.sh
