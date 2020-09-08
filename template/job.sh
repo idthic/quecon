@@ -13,6 +13,7 @@ cd "$HOME"
 . .bashrc
 cd "$IDTSUB_PWD"
 
+export PATH=$IDTSUB_JOBDIR/bin:$PATH
 export IDTSUB_INDEX
 for IDTSUB_INDEX in {%%MIN%%..%%MAX%%}; do
   _idtsub_command=$IDTSUB_COMMAND

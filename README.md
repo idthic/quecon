@@ -18,6 +18,11 @@ idtsub submit [-ct | -r RANGE] COMMAND
   file after submission.  This is useful when one wants to edit the
   submitted script after the submission.
 
+- `-C BIN`
+
+  Copy the binary found in `PATH` to the job local directory and
+  prepend the directory to `PATH`.
+
 - `-t`
 
   Use temporary directory `IDTSUB_TMPDIR`.  The directory will be
