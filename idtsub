@@ -212,9 +212,9 @@ function cmd:submit {
   done
 }
 
+## @fn cmd:stat/list
+##   @var[in] flags
 function cmd:stat/list {
-  local flags=
-
   echo 'INDE JOB_ID             NODE       STAT   COMMAND'
 
   local jobdir index=0
@@ -222,7 +222,6 @@ function cmd:stat/list {
     ((index++))
     local job_id=${jobdir##*/}
     local stat=- fail=0 command=- cwd=- node=- time_start= time_end=
-    [[ $flags == *C* && -s $jobdir/complete.mark ]] && continue
 
     if [[ -s $jobdir/stat.sh ]]; then
       source "$jobdir/stat.sh"
@@ -244,6 +243,7 @@ function cmd:stat/list {
            sgr_stat=$'\e[32m' ;;
       esac
     fi
+    [[ $flags != *a* && $stat == C* ]] && continue
 
     local time=-
     if [[ $time_start ]]; then
@@ -276,35 +276,73 @@ function idtsub/jobdir-eval {
   return 1
 }
 
+function cmd:stat/readargs {
+  flags= id= type=
+  while (($#)); do
+    local arg=$1; shift
+    if [[ $arg == -* ]]; then
+      case $arg in
+      (-a)
+        flags=a$flags ;;
+      (*)
+        echo "idtsub: unrecognized argument '$arg'" >&2
+        flags=E$flags ;;
+      esac
+    else
+      if [[ ! $id ]]; then
+        if [[ ! $arg || ${arg//[0-9]} ]]; then
+          echo "idtsub: invalid job id '$arg'." >&2
+          flags=E$flags
+        else
+          id=$arg
+        fi
+      elif [[ ! $type ]]; then
+        if [[ ! $arg ]]; then
+          echo "idtsub: invalid argument ''." >&2
+          flags=E$flags
+        else
+          type=$arg
+        fi
+      else
+        echo "idtsub: redundant argument '$arg'" >&2
+        flags=E$flags
+      fi
+    fi
+  done
+}
 function cmd:stat {
-  if (($#==0)); then
+  local flags id type
+  cmd:stat/readargs "$@"
+  [[ $flags == *E* ]] && return 2
+
+  if [[ ! $id ]]; then
     cmd:stat/list
     return "$?"
   fi
 
-  case $2 in
+  case $type in
   (''|log)
-    idtsub/jobdir-eval "$1" 'cat stat.log' ;;
+    idtsub/jobdir-eval "$id" 'cat stat.log' ;;
   (out|tail)
     local -a tail_options=()
     tail_options=()
     [[ $2 == out ]] && tail_options+=(-n +1)
-    idtsub/jobdir-eval "$1" '
+    idtsub/jobdir-eval "$id" '
       [[ -s complete.mark ]] || tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
   (stat.sh|sub.sh|job.sh|cmd.sh)
-    idtsub/jobdir-eval "$1" 'cat '"$2" ;;
+    idtsub/jobdir-eval "$id" 'cat '"$type" ;;
   (ls)
-    idtsub/jobdir-eval "$1" 'ls -la' ;;
+    idtsub/jobdir-eval "$id" 'ls -la' ;;
   (*)
-    echo "idtsub/stat: unknown stat type '$2'" >&2
+    echo "idtsub/stat: unknown stat type '$type'" >&2
     return 2 ;;
   esac
 }
 
 function main {
-  if (($#==0)); then
-    cmd:stat
+  if (($#==0)) || [[ $1 == -* ]]; then
+    cmd:stat "$@"
     return
   elif is-function "cmd:$1"; then
     "cmd:$@"

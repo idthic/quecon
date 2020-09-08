@@ -38,8 +38,8 @@ idtsub submit [-ct | -r RANGE] COMMAND
 ## 2. idtsub stat
 
 ```
-idtsub [stat]
-idtsub stat JOB_INDEX [TYPE]
+idtsub [stat] [OPTIONS...]
+idtsub stat JOB_INDEX [TYPE] [OPTIONS...]
 ```
 
 ### TYPE
