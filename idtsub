@@ -5,11 +5,13 @@ idtsub_data_path=$idtsub_prefix/share/idtsub
 idtsub_tmpdir_base=/dev/shm/$UID.$USER
 idtsub_system=slurm
 
-function is-function { declare -f "$1" &>/dev/null; }
+function idtsub/is-function { declare -f "$1" &>/dev/null; }
+function idtsub/function#try { if idtsub/is-function "$1"; then "$@"; else return 127; fi; }
+
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
 function mkpd { [[ $1 == ?*/* ]] && mkd "${1%/*}"; }
 
-function string#seconds-to-human {
+function idtsub/string#seconds-to-human {
   local time=$1
   if ((time<3600)); then
     printf -v ret '%02dm%02ds' "$((time/60%60))" "$((time%60))"
@@ -32,46 +34,143 @@ function quote-words {
   ret=$out
 }
 
+function idtsub/readargs {
+  local cmdname=$1; shift
+  local opt= has_optarg= optarg=
+  local iarg=0 args
+  args=("$@")
+  while ((iarg<$#)); do
+    local arg=${args[iarg++]}
+    if [[ $flags != - && $arg == -?* ]]; then
+      case $arg in
+      (--) flags=-$flags ;;
+      (--*)
+        opt=${arg:2} optarg= has_optarg=
+        [[ $opt == *=* ]] &&
+          has_optarg=1 optarg=${opt#*=} opt=${opt%%=*}
+        idtsub/function#try "idtsub/readargs:$cmdname/option:$opt"
+        (($?==127)) && idtsub/readargs/argerr "unrecognized option '$arg'." ;;
+      (-*)
+        local ic=1
+        while ((ic<${#arg})); do
+          opt=${arg:ic:1}; ((ic++))
+          optarg=${arg:ic} has_optarg=${optarg:+1}
+          idtsub/function#try "idtsub/readargs:$cmdname/option:$opt"
+          if (($?==127)); then
+            idtsub/readargs/argerr "unrecognized option '-$opt'."
+            continue
+          fi
+          [[ $has_optarg == used ]] && break
+        done ;;
+      esac
+    else
+      idtsub/function#try "idtsub/readargs:$cmdname/process-argument"
+      (($?==127)) && idtsub/readargs/argerr "unrecognized argument '$arg'"
+    fi
+  done
+  [[ $flags != *E* ]]
+}
+## @fn idtsub/readargs/argerr message
+##   @param[in] message
+##   @var[in] cmdname iarg
+##   @var[in,out] flags
+function idtsub/readargs/argerr {
+  echo "idtsub/$cmdname:\$$iarg: $1" >&2
+  flags=E$flags
+}
+## @fn idtsub/readargs/get-optarg opts
+##   @var[in] cmdname iarg args opt has_optarg
+##   @var[in,out] optarg flags
+function idtsub/readargs/get-optarg {
+  local getoptarg_opts=$1
+  if [[ $has_optarg ]]; then
+    has_optarg=used
+  else
+    if ((iarg>=${#args[@]})); then
+      local o=-$opt; ((${#opt}>1)) && o=-$o
+      idtsub/readargs/argerr "missing option argument for '$o'."
+      return 1
+    fi
+    optarg=${args[iarg++]}
+  fi
+
+  if [[ :$getoptarg_opts: == *:unsigned:* ]]; then
+    if [[ ! $optarg || ${optarg//[0-9]} ]]; then
+       local o=-$opt; ((${#opt}>1)) && o=-$o
+       idtsub/readargs/argerr "unsigned integer is required as an optarg of '$o'."
+       return 1
+    fi
+  fi
+}
+
+## @fn idtsub/readargs/define-longname cmdname opt longname
+function idtsub/readargs/define-longname {
+  local cmdname=$1 c=${2%%:*} longname=${2#*:}
+  [[ $2 == *:* && $longname ]] &&
+    eval "function idtsub/readargs:$cmdname/option:$longname { idtsub/readargs:submit/option:$c; }"
+}
+
+## @fn idtsub/readargs/define-flag-option cmdname opt [longname]
+function idtsub/readargs/define-flag-option {
+  local cmdname=$1 c=${2%%:*} flag=${3:-${2::1}}
+  eval "function idtsub/readargs:$cmdname/option:$c { flags=$flag\$flags; }"
+  idtsub/readargs/define-longname "$@"
+}
+## @fn idtsub/readargs/define-string-option cmdname opt[:longname] var [opts]
+function idtsub/readargs/define-scalar-option {
+  local cmdname=$1 c=${2%%:*} var=$3 opts=$4
+  eval "function idtsub/readargs:$cmdname/option:$c { idtsub/readargs/get-optarg '$opts' && $var=\$optarg; }"
+  idtsub/readargs/define-longname "$@"
+}
+## @fn idtsub/readargs/define-array-option cmdname opt[:longname] arr [opts]
+function idtsub/readargs/define-array-option {
+  local cmdname=$1 c=${2%%:*} arr=$3 opts=$4
+  eval "function idtsub/readargs:$cmdname/option:$c { idtsub/readargs/get-optarg '$opts' && $arr+=(\"\$optarg\"); }"
+  idtsub/readargs/define-longname "$@"
+}
+
 #-----------------------------------------------------------------------------
 
+idtsub/readargs/define-scalar-option system-submit D:chdir  chdir
+idtsub/readargs/define-scalar-option system-submit n:ntasks ntask unsigned
+idtsub/readargs/define-scalar-option system-submit J:job-name job_name
+function idtsub/readargs:system-submit/process-argument {
+  if [[ $script ]]; then
+    idtsub/readargs/argerr "redundant argument '$arg'." >&2
+    return 1
+  fi
+  if [[ ! $arg ]]; then
+    idtsub/readargs/argerr "invalid argument '$arg'." >&2
+    return 1
+  fi
+  script=$arg
+}
+
 ## @fn idtsub/system/submit.readargs [-wnJ OPTARG] SCRIPT
-##   @var[out] floags wd ncore job_name script
+##   @var[out] floags chdir ntask job_name script
 function idtsub/system/submit.readargs {
-  flags= wd=$PWD ncore=1 job_name=unnamed script=
-  while (($#)); do
-    local arg=$1; shift
-    case $arg in
-    (-w) wd=$1; shift ;;
-    (-n) ncore=$1; shift ;;
-    (-J) job_name=$1; shift ;;
-    (-*) echo "idtsub submit: unrecognized option '$arg'." >&2
-         flags=E$flags ;;
-    ('') echo "idtsub submit: invalid argument '$arg'." >&2
-         flags=E$flags ;;
-    (*)  script=$arg ;;
-    esac
-  done
+  flags= chdir=$PWD ntask=1 job_name=unnamed script=
+  idtsub/readargs system-submit "$@"
   if [[ ! $script ]]; then
     echo "idtsub submit: script is not specified." >&2
     flags=E$flags
   fi
-  [[ $flags == *E* ]] && return 2
-  return 0
+  [[ $flags != *E* ]]
 }
 
 function idtsub/system:slurm/submit {
-  local floags wd ncore job_name script
+  local floags chdir ntask job_name script
   idtsub/system/submit.readargs "$@" || return "$?"
-  (cd "$jobdir"; sbatch -N "$ncore" -p amd_256 -J "$job_name" "$script")
+  (cd "$chdir"; sbatch -N 1 -n "$ntask" -p amd_256 -J "$job_name" "$script")
 }
 function idtsub/system:slurm/emitdef {
   echo 'start_thread() { srun -n 1 "$1"; }'
 }
 
 function idtsub/system:direct/submit {
-  local floags wd ncore job_name script
+  local floags chdir ntask job_name script
   idtsub/system/submit.readargs "$@" || return "$?"
-  (cd "$wd"; bash "$script" &> "out" </dev/null) & disown
+  (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
 }
 function idtsub/system:direct/emitdef {
   echo 'start_thread() { eval "$1"; }'
@@ -135,31 +234,30 @@ function cmd:submit/save-binary {
 ##   @var[out] job_name
 ##   @var[out] bin_names
 ##   @var[out] job_system
+idtsub/readargs/define-flag-option   submit c:copy          c
+idtsub/readargs/define-flag-option   submit t:create-tmpdir t
+idtsub/readargs/define-array-option  submit C:copy-binary   bin_names
+idtsub/readargs/define-scalar-option submit J:job-name      job_name
+idtsub/readargs/define-scalar-option submit system          job_system
+function idtsub/readargs:submit/option:r {
+  idtsub/readargs/get-optarg && range=$optarg flags=r$flags
+}
+idtsub/readargs/define-longname submit r repeat
+function idtsub/readargs:submit/process-argument {
+  if [[ ! $command ]]; then
+    command=$arg
+  else
+    idtsub/readargs/argerr "redundant argument '$arg'."
+  fi
+}
 function cmd:submit/readargs {
-  flags= command= job_name= job_system=$idtsub_system
+  flags=
+  command= job_name= job_system=$idtsub_system
   bin_names=()
   local range
-  while (($#)); do
-    local arg=$1; shift
-    if [[ $arg == -* ]]; then
-      case $arg in
-      (-c) flags+=c ;;
-      (-C) bin_names+=("$1"); shift ;;
-      (-t) flags+=t ;;
-      (-J) job_name=$1; shift ;;
-      (-r) flags+=r; range=$1; shift ;;
-      (--system) job_system=$1; shift ;;
-      (*)
-        echo "idtsub: unrecognized option '$arg'" >&2
-        flags+=E ;;
-      esac
-    elif [[ ! $command ]]; then
-      command=$arg
-    else
-      echo "idtsub: command is already specified." >&2
-      flags+=E
-    fi
-  done
+
+  idtsub/readargs submit "$@"
+
   if [[ ! $command ]]; then
     echo "idtsub: command is not specified." >&2
     flags+=E
@@ -203,7 +301,7 @@ function cmd:submit {
 
   # Job name
   [[ $job_name ]] || job_name=$command
-  
+
   local batch_size=$(((range_end-range_beg+range_cpu-1)/range_cpu))
   local ijob=$range_beg icpu=0
   for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
@@ -277,7 +375,7 @@ function cmd:submit {
       echo "cwd='${PWD//$q/$Q}'"
       echo "stat=P"
     } >> "$fstat"
-    if ! idtsub/system:"$job_system"/submit -w "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
+    if ! idtsub/system:"$job_system"/submit -D "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
       echo "idtsub:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] IDTSUB submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"
@@ -322,7 +420,7 @@ function cmd:stat/list {
     local time=-
     if [[ $time_start ]]; then
       [[ $time_end ]] || time_end=$(date +%s)
-      local ret; string#seconds-to-human $((time_end-time_start)); time=$ret
+      local ret; idtsub/string#seconds-to-human $((time_end-time_start)); time=$ret
     fi
 
     printf '%04d %-18s %-10.10s %s%-6s%s %-6s %s\n' \
@@ -350,44 +448,30 @@ function idtsub/jobdir-eval {
   return 1
 }
 
-function cmd:stat/readargs {
-  flags= id= type=
-  while (($#)); do
-    local arg=$1; shift
-    if [[ $arg == -* ]]; then
-      case $arg in
-      (-a)
-        flags=a$flags ;;
-      (*)
-        echo "idtsub: unrecognized argument '$arg'" >&2
-        flags=E$flags ;;
-      esac
+idtsub/readargs/define-flag-option stat a:all a
+function idtsub/readargs:stat/process-argument {
+  if [[ ! $id ]]; then
+    if [[ ! $arg || ${arg//[0-9]} ]]; then
+      echo "idtsub: invalid job id '$arg'." >&2
+      flags=E$flags
     else
-      if [[ ! $id ]]; then
-        if [[ ! $arg || ${arg//[0-9]} ]]; then
-          echo "idtsub: invalid job id '$arg'." >&2
-          flags=E$flags
-        else
-          id=$arg
-        fi
-      elif [[ ! $type ]]; then
-        if [[ ! $arg ]]; then
-          echo "idtsub: invalid argument ''." >&2
-          flags=E$flags
-        else
-          type=$arg
-        fi
-      else
-        echo "idtsub: redundant argument '$arg'" >&2
-        flags=E$flags
-      fi
+      id=$arg
     fi
-  done
+  elif [[ ! $type ]]; then
+    if [[ ! $arg ]]; then
+      echo "idtsub: invalid argument ''." >&2
+      flags=E$flags
+    else
+      type=$arg
+    fi
+  else
+    idtsub/readargs/argerr "idtsub: redundant argument '$arg'"
+    return 1
+  fi
 }
 function cmd:stat {
-  local flags id type
-  cmd:stat/readargs "$@"
-  [[ $flags == *E* ]] && return 2
+  local flags= id= type=
+  idtsub/readargs stat "$@" || return 2
 
   if [[ ! $id ]]; then
     cmd:stat/list
@@ -418,7 +502,7 @@ function main {
   if (($#==0)) || [[ $1 == -* ]]; then
     cmd:stat "$@"
     return
-  elif is-function "cmd:$1"; then
+  elif idtsub/is-function "cmd:$1"; then
     "cmd:$@"
     return
   elif local rex='^s[0-9]+$'; [[ $1 =~ $rex ]]; then
