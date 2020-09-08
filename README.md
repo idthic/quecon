@@ -35,6 +35,10 @@ idtsub submit [-ct | -r RANGE] COMMAND
   value for `NPROC` is 1.  When `REP` is specified, the matching
   string in `COMMAND` is replaced by the value of `IDTSUB_INDEX`.
 
+- `--system JOB_SYSTEM`
+
+  Select a underlying job system.  One of `slurm` or `direct`.
+
 ## 2. idtsub stat
 
 ```

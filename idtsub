@@ -3,6 +3,7 @@
 idtsub_prefix=~/.opt/idt
 idtsub_data_path=$idtsub_prefix/share/idtsub
 idtsub_tmpdir_base=/dev/shm/$UID.$USER
+idtsub_system=slurm
 
 function is-function { declare -f "$1" &>/dev/null; }
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
@@ -18,7 +19,6 @@ function string#seconds-to-human {
     printf -v ret '%02dd%02dh' "$((time/3600/24))" "$((time/3600%24))"
   fi
 }
-
 function quote-words {
   local word out= q=\' Q="'\''" specialchars=$IFS$'|&;()[]{}<>\\`$?*~!^#'$q\"
   for word; do
@@ -31,6 +31,53 @@ function quote-words {
   done
   ret=$out
 }
+
+#-----------------------------------------------------------------------------
+
+## @fn idtsub/system/submit.readargs [-wnJ OPTARG] SCRIPT
+##   @var[out] floags wd ncore job_name script
+function idtsub/system/submit.readargs {
+  flags= wd=$PWD ncore=1 job_name=unnamed script=
+  while (($#)); do
+    local arg=$1; shift
+    case $arg in
+    (-w) wd=$1; shift ;;
+    (-n) ncore=$1; shift ;;
+    (-J) job_name=$1; shift ;;
+    (-*) echo "idtsub submit: unrecognized option '$arg'." >&2
+         flags=E$flags ;;
+    ('') echo "idtsub submit: invalid argument '$arg'." >&2
+         flags=E$flags ;;
+    (*)  script=$arg ;;
+    esac
+  done
+  if [[ ! $script ]]; then
+    echo "idtsub submit: script is not specified." >&2
+    flags=E$flags
+  fi
+  [[ $flags == *E* ]] && return 2
+  return 0
+}
+
+function idtsub/system:slurm/submit {
+  local floags wd ncore job_name script
+  idtsub/system/submit.readargs "$@" || return "$?"
+  (cd "$jobdir"; sbatch -N "$ncore" -p amd_256 -J "$job_name" "$script")
+}
+function idtsub/system:slurm/emitdef {
+  echo 'start_thread() { srun -n 1 "$1"; }'
+}
+
+function idtsub/system:direct/submit {
+  local floags wd ncore job_name script
+  idtsub/system/submit.readargs "$@" || return "$?"
+  (cd "$wd"; bash "$script" &> "out" </dev/null) & disown
+}
+function idtsub/system:direct/emitdef {
+  echo 'start_thread() { eval "$1"; }'
+}
+
+#-----------------------------------------------------------------------------
 
 ## @fn cmd:submit/make-jobdir
 ##   @var[out] jobdir
@@ -87,8 +134,9 @@ function cmd:submit/save-binary {
 ##   @var[out] range_{rep,beg,end,cpu}
 ##   @var[out] job_name
 ##   @var[out] bin_names
+##   @var[out] job_system
 function cmd:submit/readargs {
-  flags= command= job_name=
+  flags= command= job_name= job_system=$idtsub_system
   bin_names=()
   local range
   while (($#)); do
@@ -100,6 +148,7 @@ function cmd:submit/readargs {
       (-t) flags+=t ;;
       (-J) job_name=$1; shift ;;
       (-r) flags+=r; range=$1; shift ;;
+      (--system) job_system=$1; shift ;;
       (*)
         echo "idtsub: unrecognized option '$arg'" >&2
         flags+=E ;;
@@ -141,7 +190,7 @@ function cmd:submit/readargs {
 function cmd:submit {
   local q=\' Q="'\''"
 
-  local flags command job_name bin_names
+  local flags command job_name bin_names job_system
   local range_{rep=,beg=0,end=1,cpu=1}
   cmd:submit/readargs "$@" || return 2
 
@@ -205,7 +254,8 @@ function cmd:submit {
       echo '#!/usr/bin/env bash'
       echo "IDTSUB_JOBDIR='${jobdir//$q/$Q}'"
       echo "IDTSUB_TMPDIR='${_idtsub_tmpdir//$q/$Q}'"
-      tail -n +4 "$idtsub_data_path"/template/sub.sh
+      idtsub/system:"$job_system"/emitdef
+      tail -n +5 "$idtsub_data_path"/template/sub.sh
     } > "$fsub"
 
     chmod +x "$fjob" "$fsub"
@@ -227,7 +277,7 @@ function cmd:submit {
       echo "cwd='${PWD//$q/$Q}'"
       echo "stat=P"
     } >> "$fstat"
-    if ! (cd "$jobdir"; sbatch -N 1 -p amd_256 -J "$job_name$job_range_suffix" sub.sh); then
+    if ! idtsub/system:"$job_system"/submit -w "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
       echo "idtsub:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] IDTSUB submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"
