@@ -12,14 +12,14 @@ endif
 export VERBOSE
 MKTOOL := bash mktool.sh
 
-install_files += $(INSDIR)/bin/idtsub
-install_files += $(INSDIR)/share/idtsub/template/sub.sh
-install_files += $(INSDIR)/share/idtsub/template/job.sh
-$(INSDIR)/bin/idtsub: idtsub
+install_files += $(INSDIR)/bin/quecon
+install_files += $(INSDIR)/share/quecon/template/sub.sh
+install_files += $(INSDIR)/share/quecon/template/job.sh
+$(INSDIR)/bin/quecon: quecon
 	@$(MKTOOL) install $< $@
-$(INSDIR)/share/idtsub/template/sub.sh: template/sub.sh
+$(INSDIR)/share/quecon/template/sub.sh: template/sub.sh
 	@$(MKTOOL) install $< $@
-$(INSDIR)/share/idtsub/template/job.sh: template/job.sh
+$(INSDIR)/share/quecon/template/job.sh: template/job.sh
 	@$(MKTOOL) install $< $@
 
 install: $(install_files)

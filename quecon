@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-idtsub_prefix=~/.opt/idt
-idtsub_data_path=$idtsub_prefix/share/idtsub
-idtsub_tmpdir_base=/dev/shm/$UID.$USER
-idtsub_system=slurm
+quecon_prefix=~/.opt/idt
+quecon_data_path=$quecon_prefix/share/quecon
+quecon_tmpdir_base=/dev/shm/$UID.$USER
+quecon_system=slurm
 
-function idtsub/is-function { declare -f "$1" &>/dev/null; }
-function idtsub/function#try { if idtsub/is-function "$1"; then "$@"; else return 127; fi; }
+function quecon/is-function { declare -f "$1" &>/dev/null; }
+function quecon/function#try { if quecon/is-function "$1"; then "$@"; else return 127; fi; }
 
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
 function mkpd { [[ $1 == ?*/* ]] && mkd "${1%/*}"; }
 
-function idtsub/string#seconds-to-human {
+function quecon/string#seconds-to-human {
   local time=$1
   if ((time<3600)); then
     printf -v ret '%02dm%02ds' "$((time/60%60))" "$((time%60))"
@@ -34,7 +34,7 @@ function quote-words {
   ret=$out
 }
 
-function idtsub/readargs {
+function quecon/readargs {
   local cmdname=$1; shift
   local opt= has_optarg= optarg=
   local iarg=0 args
@@ -48,47 +48,47 @@ function idtsub/readargs {
         opt=${arg:2} optarg= has_optarg=
         [[ $opt == *=* ]] &&
           has_optarg=1 optarg=${opt#*=} opt=${opt%%=*}
-        idtsub/function#try "idtsub/readargs:$cmdname/option:$opt"
-        (($?==127)) && idtsub/readargs/argerr "unrecognized option '$arg'." ;;
+        quecon/function#try "quecon/readargs:$cmdname/option:$opt"
+        (($?==127)) && quecon/readargs/argerr "unrecognized option '$arg'." ;;
       (-*)
         local ic=1
         while ((ic<${#arg})); do
           opt=${arg:ic:1}; ((ic++))
           optarg=${arg:ic} has_optarg=${optarg:+1}
-          idtsub/function#try "idtsub/readargs:$cmdname/option:$opt"
+          quecon/function#try "quecon/readargs:$cmdname/option:$opt"
           if (($?==127)); then
-            idtsub/readargs/argerr "unrecognized option '-$opt'."
+            quecon/readargs/argerr "unrecognized option '-$opt'."
             continue
           fi
           [[ $has_optarg == used ]] && break
         done ;;
       esac
     else
-      idtsub/function#try "idtsub/readargs:$cmdname/process-argument"
-      (($?==127)) && idtsub/readargs/argerr "unrecognized argument '$arg'"
+      quecon/function#try "quecon/readargs:$cmdname/process-argument"
+      (($?==127)) && quecon/readargs/argerr "unrecognized argument '$arg'"
     fi
   done
   [[ $flags != *E* ]]
 }
-## @fn idtsub/readargs/argerr message
+## @fn quecon/readargs/argerr message
 ##   @param[in] message
 ##   @var[in] cmdname iarg
 ##   @var[in,out] flags
-function idtsub/readargs/argerr {
-  echo "idtsub/$cmdname:\$$iarg: $1" >&2
+function quecon/readargs/argerr {
+  echo "quecon/$cmdname:\$$iarg: $1" >&2
   flags=E$flags
 }
-## @fn idtsub/readargs/get-optarg opts
+## @fn quecon/readargs/get-optarg opts
 ##   @var[in] cmdname iarg args opt has_optarg
 ##   @var[in,out] optarg flags
-function idtsub/readargs/get-optarg {
+function quecon/readargs/get-optarg {
   local getoptarg_opts=$1
   if [[ $has_optarg ]]; then
     has_optarg=used
   else
     if ((iarg>=${#args[@]})); then
       local o=-$opt; ((${#opt}>1)) && o=-$o
-      idtsub/readargs/argerr "missing option argument for '$o'."
+      quecon/readargs/argerr "missing option argument for '$o'."
       return 1
     fi
     optarg=${args[iarg++]}
@@ -97,82 +97,82 @@ function idtsub/readargs/get-optarg {
   if [[ :$getoptarg_opts: == *:unsigned:* ]]; then
     if [[ ! $optarg || ${optarg//[0-9]} ]]; then
        local o=-$opt; ((${#opt}>1)) && o=-$o
-       idtsub/readargs/argerr "unsigned integer is required as an optarg of '$o'."
+       quecon/readargs/argerr "unsigned integer is required as an optarg of '$o'."
        return 1
     fi
   fi
 }
 
-## @fn idtsub/readargs/define-longname cmdname opt longname
-function idtsub/readargs/define-longname {
+## @fn quecon/readargs/define-longname cmdname opt longname
+function quecon/readargs/define-longname {
   local cmdname=$1 c=${2%%:*} longname=${2#*:}
   [[ $2 == *:* && $longname ]] &&
-    eval "function idtsub/readargs:$cmdname/option:$longname { idtsub/readargs:submit/option:$c; }"
+    eval "function quecon/readargs:$cmdname/option:$longname { quecon/readargs:submit/option:$c; }"
 }
 
-## @fn idtsub/readargs/define-flag-option cmdname opt [longname]
-function idtsub/readargs/define-flag-option {
+## @fn quecon/readargs/define-flag-option cmdname opt [longname]
+function quecon/readargs/define-flag-option {
   local cmdname=$1 c=${2%%:*} flag=${3:-${2::1}}
-  eval "function idtsub/readargs:$cmdname/option:$c { flags=$flag\$flags; }"
-  idtsub/readargs/define-longname "$@"
+  eval "function quecon/readargs:$cmdname/option:$c { flags=$flag\$flags; }"
+  quecon/readargs/define-longname "$@"
 }
-## @fn idtsub/readargs/define-string-option cmdname opt[:longname] var [opts]
-function idtsub/readargs/define-scalar-option {
+## @fn quecon/readargs/define-string-option cmdname opt[:longname] var [opts]
+function quecon/readargs/define-scalar-option {
   local cmdname=$1 c=${2%%:*} var=$3 opts=$4
-  eval "function idtsub/readargs:$cmdname/option:$c { idtsub/readargs/get-optarg '$opts' && $var=\$optarg; }"
-  idtsub/readargs/define-longname "$@"
+  eval "function quecon/readargs:$cmdname/option:$c { quecon/readargs/get-optarg '$opts' && $var=\$optarg; }"
+  quecon/readargs/define-longname "$@"
 }
-## @fn idtsub/readargs/define-array-option cmdname opt[:longname] arr [opts]
-function idtsub/readargs/define-array-option {
+## @fn quecon/readargs/define-array-option cmdname opt[:longname] arr [opts]
+function quecon/readargs/define-array-option {
   local cmdname=$1 c=${2%%:*} arr=$3 opts=$4
-  eval "function idtsub/readargs:$cmdname/option:$c { idtsub/readargs/get-optarg '$opts' && $arr+=(\"\$optarg\"); }"
-  idtsub/readargs/define-longname "$@"
+  eval "function quecon/readargs:$cmdname/option:$c { quecon/readargs/get-optarg '$opts' && $arr+=(\"\$optarg\"); }"
+  quecon/readargs/define-longname "$@"
 }
 
 #-----------------------------------------------------------------------------
 
-idtsub/readargs/define-scalar-option system-submit D:chdir  chdir
-idtsub/readargs/define-scalar-option system-submit n:ntasks ntask unsigned
-idtsub/readargs/define-scalar-option system-submit J:job-name job_name
-function idtsub/readargs:system-submit/process-argument {
+quecon/readargs/define-scalar-option system-submit D:chdir  chdir
+quecon/readargs/define-scalar-option system-submit n:ntasks ntask unsigned
+quecon/readargs/define-scalar-option system-submit J:job-name job_name
+function quecon/readargs:system-submit/process-argument {
   if [[ $script ]]; then
-    idtsub/readargs/argerr "redundant argument '$arg'." >&2
+    quecon/readargs/argerr "redundant argument '$arg'." >&2
     return 1
   fi
   if [[ ! $arg ]]; then
-    idtsub/readargs/argerr "invalid argument '$arg'." >&2
+    quecon/readargs/argerr "invalid argument '$arg'." >&2
     return 1
   fi
   script=$arg
 }
 
-## @fn idtsub/system/submit.readargs [-wnJ OPTARG] SCRIPT
+## @fn quecon/system/submit.readargs [-wnJ OPTARG] SCRIPT
 ##   @var[out] floags chdir ntask job_name script
-function idtsub/system/submit.readargs {
+function quecon/system/submit.readargs {
   flags= chdir=$PWD ntask=1 job_name=unnamed script=
-  idtsub/readargs system-submit "$@"
+  quecon/readargs system-submit "$@"
   if [[ ! $script ]]; then
-    echo "idtsub submit: script is not specified." >&2
+    echo "quecon submit: script is not specified." >&2
     flags=E$flags
   fi
   [[ $flags != *E* ]]
 }
 
-function idtsub/system:slurm/submit {
+function quecon/system:slurm/submit {
   local floags chdir ntask job_name script
-  idtsub/system/submit.readargs "$@" || return "$?"
+  quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; sbatch -N 1 -n "$ntask" -p amd_256 -J "$job_name" "$script")
 }
-function idtsub/system:slurm/emitdef {
+function quecon/system:slurm/emitdef {
   echo 'start_thread() { srun -n 1 "$1"; }'
 }
 
-function idtsub/system:direct/submit {
+function quecon/system:direct/submit {
   local floags chdir ntask job_name script
-  idtsub/system/submit.readargs "$@" || return "$?"
+  quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
 }
-function idtsub/system:direct/emitdef {
+function quecon/system:direct/emitdef {
   echo 'start_thread() { eval "$1"; }'
 }
 
@@ -182,7 +182,7 @@ function idtsub/system:direct/emitdef {
 ##   @var[out] jobdir
 function cmd:submit/make-jobdir {
   jobdir=
-  local jobdir_base=$idtsub_data_path/jobs
+  local jobdir_base=$quecon_data_path/jobs
   [[ -d $jobdir_base ]] || mkdir -p "$jobdir_base"
   local date=$(date +%Y%m%d-%H%M%S)
   local index=0
@@ -191,7 +191,7 @@ function cmd:submit/make-jobdir {
     mkdir "$jobdir" 2>/dev/null && return 0
   done
   jobdir=
-  echo "idtsub: failed to create job directory" >&2
+  echo "quecon: failed to create job directory" >&2
   return 1
 }
 
@@ -204,7 +204,7 @@ function cmd:submit/save-binary {
   local src=$1 dst=$2
   local bin_path
   if ! bin_path=$(type -p "$src"); then
-    "idtsub: failed to find the binary '$src'." >&2
+    "quecon: failed to find the binary '$src'." >&2
     return 1
   fi
 
@@ -214,7 +214,7 @@ function cmd:submit/save-binary {
     bin_hash=$(md5sum "$bin_path" | awk '{print $1}')
   fi
 
-  local cache=$idtsub_data_path/jobs/bin/${src##*/}.$bin_hash
+  local cache=$quecon_data_path/jobs/bin/${src##*/}.$bin_hash
   if [[ ! -f $cache ]]; then
     mkpd "$cache"
     cp -L "$bin_path" "$cache"
@@ -226,7 +226,7 @@ function cmd:submit/save-binary {
 ## @fn cmd:submit/readargs args...
 ##   @var[out] flags
 ##     c   copy executable
-##     t   create IDTSUB_TMPDIR
+##     t   create QUECON_TMPDIR
 ##     r   set range
 ##     E   error
 ##   @var[out] command
@@ -234,32 +234,32 @@ function cmd:submit/save-binary {
 ##   @var[out] job_name
 ##   @var[out] bin_names
 ##   @var[out] job_system
-idtsub/readargs/define-flag-option   submit c:copy          c
-idtsub/readargs/define-flag-option   submit t:create-tmpdir t
-idtsub/readargs/define-array-option  submit C:copy-binary   bin_names
-idtsub/readargs/define-scalar-option submit J:job-name      job_name
-idtsub/readargs/define-scalar-option submit system          job_system
-function idtsub/readargs:submit/option:r {
-  idtsub/readargs/get-optarg && range=$optarg flags=r$flags
+quecon/readargs/define-flag-option   submit c:copy          c
+quecon/readargs/define-flag-option   submit t:create-tmpdir t
+quecon/readargs/define-array-option  submit C:copy-binary   bin_names
+quecon/readargs/define-scalar-option submit J:job-name      job_name
+quecon/readargs/define-scalar-option submit system          job_system
+function quecon/readargs:submit/option:r {
+  quecon/readargs/get-optarg && range=$optarg flags=r$flags
 }
-idtsub/readargs/define-longname submit r repeat
-function idtsub/readargs:submit/process-argument {
+quecon/readargs/define-longname submit r repeat
+function quecon/readargs:submit/process-argument {
   if [[ ! $command ]]; then
     command=$arg
   else
-    idtsub/readargs/argerr "redundant argument '$arg'."
+    quecon/readargs/argerr "redundant argument '$arg'."
   fi
 }
 function cmd:submit/readargs {
   flags=
-  command= job_name= job_system=$idtsub_system
+  command= job_name= job_system=$quecon_system
   bin_names=()
   local range
 
-  idtsub/readargs submit "$@"
+  quecon/readargs submit "$@"
 
   if [[ ! $command ]]; then
-    echo "idtsub: command is not specified." >&2
+    echo "quecon: command is not specified." >&2
     flags+=E
   fi
 
@@ -271,7 +271,7 @@ function cmd:submit/readargs {
   if [[ $range ]]; then
     local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+)?'
     if ! [[ $range =~ $rex ]]; then
-      echo "idtsub: invalid range spec '-r $range'." >&2
+      echo "quecon: invalid range spec '-r $range'." >&2
       flags+=E
     fi
     range_rep=${BASH_REMATCH[1]%=}
@@ -295,9 +295,9 @@ function cmd:submit {
   local submit_hash
   printf -v submit_hash '#%04X' "$RANDOM"
   local date=$(date +"%F %T %Z")
-  local ret; quote-words idtsub submit "$@"
-  echo "[$date] $submit_hash $ret" >> "$idtsub_data_path"/submit.log
-  echo "[$date] $submit_hash PWD='${PWD//$q/$Q}'" >> "$idtsub_data_path"/submit.log
+  local ret; quote-words quecon submit "$@"
+  echo "[$date] $submit_hash $ret" >> "$quecon_data_path"/submit.log
+  echo "[$date] $submit_hash PWD='${PWD//$q/$Q}'" >> "$quecon_data_path"/submit.log
 
   # Job name
   [[ $job_name ]] || job_name=$command
@@ -321,7 +321,7 @@ function cmd:submit {
       if [[ -x $cmd ]] && cp -L "$cmd" "$fcmd"; then
         command1=$fcmd${command:${#cmd}}
       else
-        "idtsub: failed to copy the file '$cmd'." >&2
+        "quecon: failed to copy the file '$cmd'." >&2
         return 1
       fi
     fi
@@ -335,25 +335,25 @@ function cmd:submit {
     local fstat=$jobdir/stat.sh
     {
       echo '#!/usr/bin/env bash'
-      echo "IDTSUB_JOBDIR='${jobdir//$q/$Q}'"
-      echo "IDTSUB_COMMAND='${command1//$q/$Q}'"
-      echo "IDTSUB_REPLACE='${range_rep//$q/$Q}'"
-      echo "IDTSUB_PWD='${PWD//$q/$Q}'"
-      echo "IDTSUB_HOME='${HOME//$q/$Q}'"
-      tail -n +7 "$idtsub_data_path"/template/job.sh |
+      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+      echo "QUECON_COMMAND='${command1//$q/$Q}'"
+      echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
+      echo "QUECON_PWD='${PWD//$q/$Q}'"
+      echo "QUECON_HOME='${HOME//$q/$Q}'"
+      tail -n +7 "$quecon_data_path"/template/job.sh |
         sed "s/%%MIN%%/$beg/g;s/%%MAX%%/$((end-1))/g;s/%%COUNT%%/$count/g"
     } > "$fjob"
 
     local fsub=$jobdir/sub.sh
     {
-      local _idtsub_tmpdir=
-      [[ $flags == *t* ]] && _idtsub_tmpdir=$idtsub_tmpdir_base/${jobdir##*/}
+      local _quecon_tmpdir=
+      [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
 
       echo '#!/usr/bin/env bash'
-      echo "IDTSUB_JOBDIR='${jobdir//$q/$Q}'"
-      echo "IDTSUB_TMPDIR='${_idtsub_tmpdir//$q/$Q}'"
-      idtsub/system:"$job_system"/emitdef
-      tail -n +5 "$idtsub_data_path"/template/sub.sh
+      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+      echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
+      quecon/system:"$job_system"/emitdef
+      tail -n +5 "$quecon_data_path"/template/sub.sh
     } > "$fsub"
 
     chmod +x "$fjob" "$fsub"
@@ -368,16 +368,16 @@ function cmd:submit {
       cmd_range_suffix=" (${range_rep:+$range_rep=}$beg:$end)"
     fi
     echo "submit: $command$cmd_range_suffix"
-    echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$idtsub_data_path"/submit.log
-    echo "[$date] IDTSUB submit" >> "$flog"
+    echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
+    echo "[$date] QUECON submit" >> "$flog"
     {
       echo "command='${command//$q/$Q}$cmd_range_suffix'"
       echo "cwd='${PWD//$q/$Q}'"
       echo "stat=P"
     } >> "$fstat"
-    if ! idtsub/system:"$job_system"/submit -D "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
-      echo "idtsub:${jobdir##*/}: failed to submit" >&2
-      echo "[$(date +"%F %T %Z")] IDTSUB submit fail" >> "$flog"
+    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
+      echo "quecon:${jobdir##*/}: failed to submit" >&2
+      echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"
       return 1
     fi
@@ -390,7 +390,7 @@ function cmd:stat/list {
   echo 'INDE JOB_ID             NODE       STAT   COMMAND'
 
   local jobdir index=0
-  for jobdir in "$idtsub_data_path"/jobs/????????-??????-*; do
+  for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
     ((index++))
     local job_id=${jobdir##*/}
     local stat=- fail=0 command=- cwd=- node=- time_start= time_end=
@@ -420,7 +420,7 @@ function cmd:stat/list {
     local time=-
     if [[ $time_start ]]; then
       [[ $time_end ]] || time_end=$(date +%s)
-      local ret; idtsub/string#seconds-to-human $((time_end-time_start)); time=$ret
+      local ret; quecon/string#seconds-to-human $((time_end-time_start)); time=$ret
     fi
 
     printf '%04d %-18s %-10.10s %s%-6s%s %-6s %s\n' \
@@ -430,48 +430,48 @@ function cmd:stat/list {
   done
 }
 
-function idtsub/jobdir-eval {
+function quecon/jobdir-eval {
   if [[ ! $1 || ${1//[0-9]} ]]; then
-    echo "idtsub: invalid job_index '$1'." >&2
+    echo "quecon: invalid job_index '$1'." >&2
     return 1
   fi
 
   local index=$((10#$1)) command=$2
   local jobdir i=0
-  for jobdir in "$idtsub_data_path"/jobs/????????-??????-*; do
+  for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
     if ((++i==index)); then
       (cd "$jobdir"; eval -- "$command")
       return
     fi
   done
-  echo "idtsub: job_index '$1' not found." >&2
+  echo "quecon: job_index '$1' not found." >&2
   return 1
 }
 
-idtsub/readargs/define-flag-option stat a:all a
-function idtsub/readargs:stat/process-argument {
+quecon/readargs/define-flag-option stat a:all a
+function quecon/readargs:stat/process-argument {
   if [[ ! $id ]]; then
     if [[ ! $arg || ${arg//[0-9]} ]]; then
-      echo "idtsub: invalid job id '$arg'." >&2
+      echo "quecon: invalid job id '$arg'." >&2
       flags=E$flags
     else
       id=$arg
     fi
   elif [[ ! $type ]]; then
     if [[ ! $arg ]]; then
-      echo "idtsub: invalid argument ''." >&2
+      echo "quecon: invalid argument ''." >&2
       flags=E$flags
     else
       type=$arg
     fi
   else
-    idtsub/readargs/argerr "idtsub: redundant argument '$arg'"
+    quecon/readargs/argerr "quecon: redundant argument '$arg'"
     return 1
   fi
 }
 function cmd:stat {
   local flags= id= type=
-  idtsub/readargs stat "$@" || return 2
+  quecon/readargs stat "$@" || return 2
 
   if [[ ! $id ]]; then
     cmd:stat/list
@@ -480,20 +480,20 @@ function cmd:stat {
 
   case $type in
   (''|log)
-    idtsub/jobdir-eval "$id" 'cat stat.log' ;;
+    quecon/jobdir-eval "$id" 'cat stat.log' ;;
   (out|tail)
     local -a tail_options=()
     tail_options=()
     [[ $2 == out ]] && tail_options+=(-n +1)
-    idtsub/jobdir-eval "$id" '
+    quecon/jobdir-eval "$id" '
       [[ -s complete.mark ]] || tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
   (stat.sh|sub.sh|job.sh|cmd.sh)
-    idtsub/jobdir-eval "$id" 'cat '"$type" ;;
+    quecon/jobdir-eval "$id" 'cat '"$type" ;;
   (ls)
-    idtsub/jobdir-eval "$id" 'ls -la' ;;
+    quecon/jobdir-eval "$id" 'ls -la' ;;
   (*)
-    echo "idtsub/stat: unknown stat type '$type'" >&2
+    echo "quecon/stat: unknown stat type '$type'" >&2
     return 2 ;;
   esac
 }
@@ -502,7 +502,7 @@ function main {
   if (($#==0)) || [[ $1 == -* ]]; then
     cmd:stat "$@"
     return
-  elif idtsub/is-function "cmd:$1"; then
+  elif quecon/is-function "cmd:$1"; then
     "cmd:$@"
     return
   elif local rex='^s[0-9]+$'; [[ $1 =~ $rex ]]; then
@@ -514,7 +514,7 @@ function main {
   # (*)
   # esac
 
-  echo "idtsub: unknown subcommand '$1'" >&2
+  echo "quecon: unknown subcommand '$1'" >&2
   exit 2
 }
 

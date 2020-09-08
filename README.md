@@ -1,15 +1,15 @@
-# idtsub
+# quecon
 
 Job scheduler interface
 
 ```
-idtsub SUBCMD ...
+quecon SUBCMD ...
 ```
 
-## 1. idtsub submit
+## 1. quecon submit
 
 ```
-idtsub submit [-ct | -r RANGE] COMMAND
+quecon submit [-ct | -r RANGE] COMMAND
 ```
 
 ### Options
@@ -31,21 +31,21 @@ idtsub submit [-ct | -r RANGE] COMMAND
 
 - `-t, --create-tmpdir`
 
-  Use temporary directory `IDTSUB_TMPDIR`.  The directory will be
+  Use temporary directory `QUECON_TMPDIR`.  The directory will be
   deleted on the job completion.
 
 - `-r, --repeat=[REP=][BEGIN:]END[/NPROC]`
 
-  Repeat commands for `IDTSUB_INDEX` in `[BEGIN, END)` using `NPROC`
+  Repeat commands for `QUECON_INDEX` in `[BEGIN, END)` using `NPROC`
   parallel jobs.  The default value for `BEGIN` is 0.  The default
   value for `NPROC` is 1.  When `REP` is specified, the matching
-  string in `COMMAND` is replaced by the value of `IDTSUB_INDEX`.
+  string in `COMMAND` is replaced by the value of `QUECON_INDEX`.
 
-## 2. idtsub stat
+## 2. quecon stat
 
 ```
-idtsub [stat] [OPTIONS...]
-idtsub stat JOB_INDEX [TYPE] [OPTIONS...]
+quecon [stat] [OPTIONS...]
+quecon stat JOB_INDEX [TYPE] [OPTIONS...]
 ```
 
 ### TYPE

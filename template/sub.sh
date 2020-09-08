@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-IDTSUB_JOBDIR='%%JOBDIR%%'
-IDTSUB_TMPDIR='%%TMPDIR%%'
+QUECON_JOBDIR='%%JOBDIR%%'
+QUECON_TMPDIR='%%TMPDIR%%'
 start_thread() { srun -n 1 "$1"; }
 
-exec 1> "$IDTSUB_JOBDIR/sub.out" 2>&1
-print_log() { echo "[$(date +"%F %T %Z")] $1" >> "$IDTSUB_JOBDIR/stat.log"; }
-print_var() { local q=\' Q="'\''"; printf "%s='%s'\n" "$1" "${2//$q/$Q}" >> "$IDTSUB_JOBDIR/stat.sh"; }
-print_log 'IDTSUB run' 
+exec 1> "$QUECON_JOBDIR/sub.out" 2>&1
+print_log() { echo "[$(date +"%F %T %Z")] $1" >> "$QUECON_JOBDIR/stat.log"; }
+print_var() { local q=\' Q="'\''"; printf "%s='%s'\n" "$1" "${2//$q/$Q}" >> "$QUECON_JOBDIR/stat.sh"; }
+print_log 'QUECON run' 
 print_var node "$HOSTNAME"
 print_var stat R
 print_var time_start "$(date +%s)"
-if [[ $IDTSUB_TMPDIR ]]; then
-  export IDTSUB_TMPDIR
-  [[ -d $IDTSUB_TMPDIR ]] ||
-    (umask 077; rm -rf "$IDTSUB_TMPDIR"; mkdir -p "$IDTSUB_TMPDIR")
+if [[ $QUECON_TMPDIR ]]; then
+  export QUECON_TMPDIR
+  [[ -d $QUECON_TMPDIR ]] ||
+    (umask 077; rm -rf "$QUECON_TMPDIR"; mkdir -p "$QUECON_TMPDIR")
 fi
-start_thread "$IDTSUB_JOBDIR/job.sh"
-[[ $IDTSUB_TMPDIR ]] && rm -rf "$IDTSUB_TMPDIR"
-print_log 'IDTSUB complete'
+start_thread "$QUECON_JOBDIR/job.sh"
+[[ $QUECON_TMPDIR ]] && rm -rf "$QUECON_TMPDIR"
+print_log 'QUECON complete'
 print_var stat C
 print_var time_end "$(date +%s)"
-echo 1 >> "$IDTSUB_JOBDIR/complete.mark" 
+echo 1 >> "$QUECON_JOBDIR/complete.mark" 
