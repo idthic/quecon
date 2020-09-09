@@ -15,7 +15,11 @@ if [[ $QUECON_TMPDIR ]]; then
   [[ -d $QUECON_TMPDIR ]] ||
     (umask 077; rm -rf "$QUECON_TMPDIR"; mkdir -p "$QUECON_TMPDIR")
 fi
-start_thread "$QUECON_JOBDIR/job.sh"
+for jobsh in "$QUECON_JOBDIR"/job*.sh; do
+  [[ -s $jobsh ]] || continue
+  start_thread "$jobsh" &
+done
+wait
 [[ $QUECON_TMPDIR ]] && rm -rf "$QUECON_TMPDIR"
 print_log 'QUECON complete'
 print_var stat C

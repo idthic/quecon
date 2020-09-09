@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 QUECON_JOBDIR='%%JOBDIR%%'
 QUECON_COMMAND='%%COMMAND%%'
+QUECON_REPNODE='%%NODE%%'
+QUECON_REPBEG='%%BEG%%'
+QUECON_REPEND='%%END%%'
 QUECON_REPLACE='%%REPLACE%%'
 QUECON_PWD='%%PWD%%'
 QUECON_HOME='%%HOME%%'
 
+_quecon_statfile=$QUECON_JOBDIR/stat$QUECON_REPNODE.sh
 print_log() { echo "[$(date +"%F %T %Z")] $1" >> "$QUECON_JOBDIR/stat.log"; }
-print_var() { local q=\' Q="'\''"; printf "%s='%s'\n" "$1" "${2//$q/$Q}" >> "$QUECON_JOBDIR/stat.sh"; }
 
 HOME=$QUECON_HOME
 cd "$HOME"
@@ -15,12 +18,11 @@ cd "$QUECON_PWD"
 
 export PATH=$QUECON_JOBDIR/bin:$PATH
 export QUECON_INDEX
-for QUECON_INDEX in {%%MIN%%..%%MAX%%}; do
+for ((QUECON_INDEX=QUECON_REPBEG;QUECON_INDEX<QUECON_REPEND;QUECON_INDEX++)); do
   _quecon_command=$QUECON_COMMAND
   [[ $QUECON_REPLACE ]] &&
     _quecon_command=${QUECON_COMMAND//$QUECON_REPLACE/$QUECON_INDEX}
   print_log "${_quecon_command/#$QUECON_JOBDIR/.}"
-  print_var stat "R$((QUECON_INDEX-%%MIN%%+1))/%%COUNT%%"
-  eval "$_quecon_command" ||
-    echo '((fail++))' >> "$QUECON_JOBDIR/stat.sh"
+  eval "$_quecon_command" || echo '((fail++))' >> "$_quecon_statfile"
+  echo '((done++))' >> "$_quecon_statfile"
 done

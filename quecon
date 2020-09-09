@@ -267,9 +267,10 @@ function cmd:submit/readargs {
   range_rep=
   range_beg=0
   range_end=1
-  range_cpu=1
+  range_node=1
+  range_core=1
   if [[ $range ]]; then
-    local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+)?'
+    local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+(x[0-9]+)?)?'
     if ! [[ $range =~ $rex ]]; then
       echo "quecon: invalid range spec '-r $range'." >&2
       flags+=E
@@ -277,9 +278,12 @@ function cmd:submit/readargs {
     range_rep=${BASH_REMATCH[1]%=}
     range_beg=${BASH_REMATCH[2]%:}
     range_end=${BASH_REMATCH[3]}
-    range_cpu=${BASH_REMATCH[4]#/}
+    range_node=${BASH_REMATCH[4]#/}
+    range_node=${range_node%%x*}
+    range_core=${BASH_REMATCH[5]#x}
     [[ $range_beg ]] || range_beg=0
-    [[ $range_cpu ]] || range_cpu=1
+    [[ $range_node ]] || range_node=1
+    [[ $range_core ]] || range_core=1
   fi
 
   [[ $flags != *E* ]]
@@ -289,7 +293,7 @@ function cmd:submit {
   local q=\' Q="'\''"
 
   local flags command job_name bin_names job_system
-  local range_{rep=,beg=0,end=1,cpu=1}
+  local range_{rep=,beg=0,end=1,node=1,core=1}
   cmd:submit/readargs "$@" || return 2
 
   local submit_hash
@@ -302,8 +306,8 @@ function cmd:submit {
   # Job name
   [[ $job_name ]] || job_name=$command
 
-  local batch_size=$(((range_end-range_beg+range_cpu-1)/range_cpu))
-  local ijob=$range_beg icpu=0
+  local batch_size=$(((range_end-range_beg+range_node-1)/range_node))
+  local ijob=$range_beg
   for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
     local beg=$ijob end=$((ijob+batch_size))
     ((end>range_end)) && end=$range_end
@@ -330,21 +334,9 @@ function cmd:submit {
       cmd:submit/save-binary "$bin_name" "$jobdir/bin/${bin_name##*/}" || return 1
     done
 
-    local fjob=$jobdir/job.sh
+    local fsub=$jobdir/sub.sh
     local flog=$jobdir/stat.log
     local fstat=$jobdir/stat.sh
-    {
-      echo '#!/usr/bin/env bash'
-      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-      echo "QUECON_COMMAND='${command1//$q/$Q}'"
-      echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
-      echo "QUECON_PWD='${PWD//$q/$Q}'"
-      echo "QUECON_HOME='${HOME//$q/$Q}'"
-      tail -n +7 "$quecon_data_path"/template/job.sh |
-        sed "s/%%MIN%%/$beg/g;s/%%MAX%%/$((end-1))/g;s/%%COUNT%%/$count/g"
-    } > "$fjob"
-
-    local fsub=$jobdir/sub.sh
     {
       local _quecon_tmpdir=
       [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
@@ -356,7 +348,30 @@ function cmd:submit {
       tail -n +5 "$quecon_data_path"/template/sub.sh
     } > "$fsub"
 
-    chmod +x "$fjob" "$fsub"
+    local rep2block=$(((end-beg+range_core-1)/range_core))
+    local rep2ijob=$beg rep2i=0
+    for ((rep2ijob=beg;rep2ijob<end;rep2ijob+=rep2block,rep2i++)); do
+      local rep2beg=$rep2ijob rep2end=$((rep2ijob+rep2block))
+      ((rep2end>end)) && rep2end=$end
+      local rep2count=$((rep2end-rep2beg))
+      ((rep2count>0)) || break
+
+      local fjob=$jobdir/job$rep2i.sh
+      {
+        echo '#!/usr/bin/env bash'
+        echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+        echo "QUECON_COMMAND='${command1//$q/$Q}'"
+        echo "QUECON_REPNODE='${rep2i//$q/$Q}'"
+        echo "QUECON_REPBEG='${rep2beg//$q/$Q}'"
+        echo "QUECON_REPEND='${rep2end//$q/$Q}'"
+        echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
+        echo "QUECON_PWD='${PWD//$q/$Q}'"
+        echo "QUECON_HOME='${HOME//$q/$Q}'"
+        tail -n +10 "$quecon_data_path"/template/job.sh
+      } > "$fjob"
+    done
+
+    chmod +x "$jobdir"/*.sh
 
     local date=$(date +"%F %T %Z")
     local job_range_suffix=
@@ -373,6 +388,7 @@ function cmd:submit {
     {
       echo "command='${command//$q/$Q}$cmd_range_suffix'"
       echo "cwd='${PWD//$q/$Q}'"
+      echo "ntask=$((end-beg))"
       echo "stat=P"
     } >> "$fstat"
     if ! quecon/system:"$job_system"/submit -D "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
@@ -391,15 +407,18 @@ function cmd:stat/list {
 
   local jobdir index=0
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
+    [[ -d $jobdir ]] || continue
     ((index++))
     local job_id=${jobdir##*/}
-    local stat=- fail=0 command=- cwd=- node=- time_start= time_end=
+    local stat=- fail=0 done=0 ntask=1
+    local command=- cwd=- node=- time_start= time_end=
 
-    if [[ -s $jobdir/stat.sh ]]; then
-      source "$jobdir/stat.sh"
-    elif [[ -s $jobdir/complete.mark ]]; then
-      stat=C
-    fi
+    local stat_sh
+    for stat_sh in "$jobdir"/stat.sh "$jobdir"/stat?*.sh; do
+      [[ -s $stat_sh ]] || continue
+      source "$stat_sh"
+    done
+    [[ $stat == - && -s $jobdir/complete.mark ]] && stat=C
 
     local sgr_stat=
     if ((fail)); then
@@ -410,7 +429,9 @@ function cmd:stat/list {
       (F*) sgr_stat=$'\e[1;91m' ;;
       (C*) [[ $stat == C ]] && stat=COMP
            sgr_stat=$'\e[94m' ;;
-      (R*) sgr_stat=$'\e[1;92m' ;;
+      (R*) [[ $stat == R ]] &&
+             stat=R$((1+done))/$ntask
+           sgr_stat=$'\e[1;92m' ;;
       (P*) [[ $stat == P ]] && stat=PEND
            sgr_stat=$'\e[32m' ;;
       esac
@@ -439,6 +460,7 @@ function quecon/jobdir-eval {
   local index=$((10#$1)) command=$2
   local jobdir i=0
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
+    [[ -d $jobdir ]] || continue
     if ((++i==index)); then
       (cd "$jobdir"; eval -- "$command")
       return

@@ -34,12 +34,13 @@ quecon submit [-ct | -r RANGE] COMMAND
   Use temporary directory `QUECON_TMPDIR`.  The directory will be
   deleted on the job completion.
 
-- `-r, --repeat=[REP=][BEGIN:]END[/NPROC]`
+- `-r, --repeat=[REP=][BEGIN:]END[/NNODE[xNCORE]]`
 
-  Repeat commands for `QUECON_INDEX` in `[BEGIN, END)` using `NPROC`
-  parallel jobs.  The default value for `BEGIN` is 0.  The default
-  value for `NPROC` is 1.  When `REP` is specified, the matching
-  string in `COMMAND` is replaced by the value of `QUECON_INDEX`.
+  Repeat commands for `QUECON_INDEX` in `[BEGIN, END)` using
+  `NNODExNCORE` parallel jobs.  The default value for `BEGIN` is 0.
+  The default value for `NPROC` is 1.  When `REP` is specified, the
+  matching string in `COMMAND` is replaced by the value of
+  `QUECON_INDEX`.
 
 ## 2. quecon stat
 
