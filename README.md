@@ -1,13 +1,28 @@
 # quecon
 
 `quecon` provides an interface to submit massive number of independent Monte-Carlo calculations to job schedulers.
-This is originally desigined for the event-by-event simulations of high-energy nuclear collisions which typically includes thousands or millions of independent events.
+This is originally desigined for event-by-event simulations of high-energy nuclear collisions which typically include thousands and millions of independent events.
+Named after *job-queue controller*.
 
 ```
 quecon SUBCMD ...
 ```
 
-## 1. quecon submit
+## 1. quecon stat
+
+```
+quecon [stat] [OPTIONS...]
+quecon [stat] JOB_INDEX [TYPE] [OPTIONS...]
+```
+
+### TYPE
+
+- `log` (default)
+- `out`, `tail`
+- `ls`
+- `sub.sh`, `cmd.sh`, `job*.sh`, `stat*.sh`
+
+## 2. quecon submit
 
 ```
 quecon submit [-ct | -r RANGE] COMMAND
@@ -42,17 +57,3 @@ quecon submit [-ct | -r RANGE] COMMAND
   The default value for `NPROC` is 1.  When `REP` is specified, the
   matching string in `COMMAND` is replaced by the value of
   `QUECON_INDEX`.
-
-## 2. quecon stat
-
-```
-quecon [stat] [OPTIONS...]
-quecon [stat] JOB_INDEX [TYPE] [OPTIONS...]
-```
-
-### TYPE
-
-- `log` (default)
-- `out`
-- `ls`
-- `stat.sh`, `sub.sh`, `job.sh`, `cmd.sh`

@@ -471,7 +471,9 @@ function quecon/jobdir-eval {
   return 1
 }
 
-quecon/readargs/define-flag-option stat a:all a
+quecon/readargs/define-flag-option stat a:all   a
+quecon/readargs/define-flag-option stat help    H
+quecon/readargs/define-flag-option stat version V
 function quecon/readargs:stat/process-argument {
   if [[ ! $id ]]; then
     if [[ ! $arg || ${arg//[0-9]} ]]; then
@@ -492,9 +494,57 @@ function quecon/readargs:stat/process-argument {
     return 1
   fi
 }
+function cmd:stat/print-version {
+  printf 'quecon (idt) 1.0.0\n'
+}
+function cmd:stat/print-help {
+  printf '%s\n' \
+         'usage: quecon [stat] [-a|--help|--version]' \
+         'Show list of jobs' \
+         '  --version     Show version and exit' \
+         '  --help        Show help and exit' \
+         '  -a, --all     Show all jobs' \
+         '' \
+         'usage: quecon [stat] NUM [TYPE]' \
+         'Show details of the specified job.' \
+         '  NUM           Select job by the job index' \
+         '  TYPE          One of the following values [default: log]:' \
+         '    log         Dump log' \
+         '    out         Dump stdout/stderr.' \
+         '    tail        Show tail of stdout/stderr.' \
+         '    ls          Show files in the quecon job directory.' \
+         '    sub.sh      Show the file content.' \
+         '    cmd.sh      Show the file content.' \
+         '    job*.sh     Show the file content.' \
+         '    stat*.sh    Show the file content.' \
+         '' \
+         'usage: quecon submit [-ct|-C BIN|-r REPEAT|--system SYSTEM] COMMAND' \
+         'Submit jobs.' \
+         '  --system=SYS  Select job scheduker. SYS = "direct", or "slurm"' \
+         '  -c, --copy    Copy the script file.' \
+         '  -C, --copy-binary=BIN' \
+         '                Copy the binary found in PATH.' \
+         '  -t, --create-tmpdir' \
+         '                Create temporary directory for the job and assigns the path to' \
+         '                the environment QUECON_TMPDIR.' \
+         '  -r, --repeat=[REP=][BEGIN:]END[/NNODE[xNCORE]]' \
+         '                Repeat the command with an integer argument.' \
+         '    REP         The pattern for command substrings to be replaced by the index.' \
+         '    BEGIN       Starting index of repeat.' \
+         '    END         Ending index of repeat. Exclusive.' \
+         '    NNODE       Number of job submissions used for repeating.' \
+         '    NCORE       Number of commands parally executed in a job.' \
+         ''
+}
 function cmd:stat {
   local flags= id= type=
   quecon/readargs stat "$@" || return 2
+
+  [[ $flags == *V* ]] &&
+    cmd:stat/print-version
+  [[ $flags == *H* ]] &&
+    cmd:stat/print-help
+  [[ $flags == *[HV]* ]] && return 0
 
   if [[ ! $id ]]; then
     cmd:stat/list
@@ -511,7 +561,7 @@ function cmd:stat {
     quecon/jobdir-eval "$id" '
       [[ -s complete.mark ]] || tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
-  (stat.sh|sub.sh|job.sh|cmd.sh)
+  (stat*.sh|sub.sh|job*.sh|cmd.sh)
     quecon/jobdir-eval "$id" 'cat '"$type" ;;
   (ls)
     quecon/jobdir-eval "$id" 'ls -la' ;;
