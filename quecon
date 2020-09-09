@@ -159,7 +159,7 @@ function quecon/system/submit.readargs {
 }
 
 function quecon/system:slurm/submit {
-  local floags chdir ntask job_name script
+  local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; sbatch -N 1 -n "$ntask" -p amd_256 -J "$job_name" "$script")
 }
@@ -168,7 +168,7 @@ function quecon/system:slurm/emitdef {
 }
 
 function quecon/system:direct/submit {
-  local floags chdir ntask job_name script
+  local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
 }
