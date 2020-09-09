@@ -46,7 +46,7 @@ quecon submit [-ct | -r RANGE] COMMAND
 
 ```
 quecon [stat] [OPTIONS...]
-quecon stat JOB_INDEX [TYPE] [OPTIONS...]
+quecon [stat] JOB_INDEX [TYPE] [OPTIONS...]
 ```
 
 ### TYPE

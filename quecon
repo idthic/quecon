@@ -527,8 +527,8 @@ function main {
   elif quecon/is-function "cmd:$1"; then
     "cmd:$@"
     return
-  elif local rex='^s[0-9]+$'; [[ $1 =~ $rex ]]; then
-    cmd:stat "${1:1}" "${@:2}"
+  elif local rex='^[0-9]+$'; [[ $1 =~ $rex ]]; then
+    cmd:stat "$1" "${@:2}"
     return
   fi
 
