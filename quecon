@@ -164,7 +164,8 @@ function quecon/system:slurm/submit {
   (cd "$chdir"; sbatch -N 1 -n "$ntask" -p amd_256 -J "$job_name" "$script")
 }
 function quecon/system:slurm/emitdef {
-  echo 'start_thread() { srun -n 1 "$1"; }'
+  #echo 'start_thread() { srun -n 1 "$1"; }'
+  echo 'start_thread() { eval "$1"; }'
 }
 
 function quecon/system:direct/submit {
@@ -391,7 +392,7 @@ function cmd:submit {
       echo "ntask=$((end-beg))"
       echo "stat=P"
     } >> "$fstat"
-    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n 1 -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
+    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
       echo "quecon:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"

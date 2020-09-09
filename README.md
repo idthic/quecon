@@ -1,6 +1,7 @@
 # quecon
 
-Job scheduler interface
+`quecon` provides an interface to submit massive number of independent Monte-Carlo calculations to job schedulers.
+This is originally desigined for the event-by-event simulations of high-energy nuclear collisions which typically includes thousands or millions of independent events.
 
 ```
 quecon SUBCMD ...
