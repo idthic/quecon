@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+shopt -s nullglob
 quecon_prefix=~/.opt/idt
 quecon_data_path=$quecon_prefix/share/quecon
 quecon_tmpdir_base=/dev/shm/$UID.$USER
@@ -160,8 +161,9 @@ function quecon/system/submit.readargs {
 
 function quecon/system:slurm/submit {
   local flags chdir ntask job_name script
+  local partition=${slurm_partition:-amd_256}
   quecon/system/submit.readargs "$@" || return "$?"
-  (cd "$chdir"; sbatch -N 1 -n "$ntask" -p amd_256 -J "$job_name" "$script")
+  (cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$partition" -J "$job_name" "$script")
 }
 function quecon/system:slurm/emitdef {
   #echo 'start_thread() { srun -n 1 "$1"; }'
@@ -424,6 +426,8 @@ function cmd:stat/list {
     local sgr_stat=
     if ((fail)); then
       [[ $stat == C* ]] && stat=F$fail
+      [[ $stat == R ]] &&
+        stat=R$done'!'$fail/$ntask
       sgr_stat=$'\e[1;91m'
     else
       case $stat in
@@ -557,7 +561,11 @@ function cmd:stat {
   (out|tail)
     local -a tail_options=()
     tail_options=()
-    [[ $2 == out ]] && tail_options+=(-n +1)
+    if [[ $2 == out ]]; then
+      tail_options+=(-n +1)
+    else
+      tail_options+=(-n 10)
+    fi
     quecon/jobdir-eval "$id" '
       [[ -s complete.mark ]] || tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
@@ -569,6 +577,22 @@ function cmd:stat {
     echo "quecon/stat: unknown stat type '$type'" >&2
     return 2 ;;
   esac
+}
+function cmd:compress {
+  local jobdir=$quecon_data_path/jobs
+  (
+    cd "$jobdir"
+    local -a dirs
+    dirs=(2???????-??????-??)
+    ((${#dirs[@]})) || return 0
+    local date=$(date +%Y%m%d)
+    cmd:stat -a >> "$date.stat"
+
+    local arcdir=$date-archive
+    mkd "$arcdir"
+    mv "${dirs[@]}" "$arcdir"
+    cmd:submit "tar cavf $arcdir.tar.xz $arcdir"
+  )
 }
 
 function main {
