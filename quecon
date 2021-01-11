@@ -163,24 +163,41 @@ function quecon/system:slurm/submit {
   local flags chdir ntask job_name script
   local partition=${slurm_partition:-amd_256}
   quecon/system/submit.readargs "$@" || return "$?"
-  (cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$partition" -J "$job_name" "$script")
+  local submit_stdout
+  submit_stdout=$(cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$partition" -J "$job_name" "$script"); local ext=$?
+  if ((ext==0)); then
+    local jobid=$(grep -Eo '[0-9]*' <<< $submit_stdout)
+    [[ $jobid ]] && echo "system=slurm:$jobid" >> "$fstat"
+  fi
+  echo "$submit_stdout"
+  return "$ext"
 }
 function quecon/system:slurm/emitdef {
   #echo 'start_thread() { srun -n 1 "$1"; }'
   echo 'start_thread() { eval "$1"; }'
+}
+function quecon/system:slurm/kill {
+  local jobid=${1#*:}
+  scancel "$jobid"
 }
 
 function quecon/system:direct/submit {
   local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
+  echo "system=direct:$!" >> "$fstat"
+  return 0
 }
 function quecon/system:direct/emitdef {
   echo 'start_thread() { eval "$1"; }'
 }
+function quecon/system:direct/kill {
+  local process_id=${1#*:}
+  kill -9 -- -"$process_id"
+}
 
 #-----------------------------------------------------------------------------
-# stat
+# job util
 
 function quecon/jobdir-eval {
   if [[ ! $1 || ${1//[0-9]} ]]; then
@@ -623,6 +640,33 @@ function cmd:archive {
   else
     rmdir "$tmpdir"
   fi
+}
+
+function cmd:kill/proc {
+  [[ -s stat.sh ]] || return 1
+  local command=- cwd=- node=- time_start= time_end= system=
+  source stat.sh
+  [[ $stat == - && -s $jobdir/complete.mark ]] && stat=C
+
+  # already completed
+  [[ $stat == C || $stat == F ]] && return 1
+
+  if [[ ! $system ]]; then
+    echo "${PWD##*/}: failed to kill the job with an unknown type." >&2
+    return 1
+  fi
+
+  local job_system=${system%%:*}
+  if quecon/system:"$job_system"/kill "${system}"; then
+    echo "stat=K" >> stat.sh
+    return 0
+  else
+    echo "quecon ($job_system): failed to kill JOB ${PWD##*/}" >&2
+    return 1
+  fi
+}
+function cmd:kill {
+  quecon/jobdir-eval "$1" 'cmd:kill/proc'
 }
 
 #------------------------------------------------------------------------------
