@@ -600,7 +600,7 @@ function cmd:stat {
       tail_options+=(-n 10)
     fi
     quecon/jobdir-eval "$id" '
-      [[ -s complete.mark ]] || tail_options+=(-f)
+      [[ ! -s complete.mark && -t 1 ]] && tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
   (stat*.sh|sub.sh|job*.sh|cmd.sh)
     quecon/jobdir-eval "$id" 'cat '"$type" ;;
