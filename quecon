@@ -658,7 +658,10 @@ function cmd:kill/proc {
 
   local job_system=${system%%:*}
   if quecon/system:"$job_system"/kill "${system}"; then
-    echo "stat=K" >> stat.sh
+    {
+      echo "stat=K"
+      date +'time_end=%s'
+    } >> stat.sh
     return 0
   else
     echo "quecon ($job_system): failed to kill JOB ${PWD##*/}" >&2
