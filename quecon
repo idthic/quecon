@@ -244,11 +244,12 @@ function quecon/get-job-info {
     sgr_stat=$'\e[1;91m'
   else
     case $stat in
+    (K*) sgr_stat=$'\e[90m' ;;
     (F*) sgr_stat=$'\e[1;91m' ;;
     (C*) [[ $stat == C ]] && stat=COMP
          sgr_stat=$'\e[94m' ;;
     (R*) [[ $stat == R ]] &&
-           stat=R$((1+done))/$ntask
+           stat=R$done/$ntask
          sgr_stat=$'\e[1;92m' ;;
     (P*) [[ $stat == P ]] && stat=PEND
          sgr_stat=$'\e[32m' ;;
@@ -526,7 +527,7 @@ function cmd:stat/list {
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
     local line stat
     quecon/get-job-info "$jobdir" || continue
-    [[ $flags != *a* && $stat == C* ]] && continue
+    [[ $flags != *a* && $stat == [CK]* ]] && continue
     printf '%s\n' "$line"
   done
 }
@@ -629,7 +630,7 @@ function cmd:archive {
   for jobdir in "$jdir"/2???????-??????-??; do
     local line stat
     quecon/get-job-info "$jobdir" || continue
-    [[ $stat == [CF]* ]] || continue
+    [[ $stat == [CFK]* ]] || continue
     printf '%s\n' "$line" >> "$statfile"
     mv "$jobdir" "$tmpdir"
   done
