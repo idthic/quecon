@@ -400,13 +400,13 @@ function cmd:submit {
   # Job name
   [[ $job_name ]] || job_name=$command
 
-  local batch_size=$(((range_end-range_beg+range_node-1)/range_node))
-  local ijob=$range_beg
-  for ((ijob=range_beg;ijob<range_end;ijob+=batch_size)); do
-    local beg=$ijob end=$((ijob+batch_size))
-    ((end>range_end)) && end=$range_end
-    local count=$((end-beg))
-    ((count>0)) || break
+  local inode
+  for ((inode=0;inode<range_node;inode++)); do
+    local node_beg=$((range_beg+inode))
+    local node_end=$range_end
+    local node_step=$range_node
+    local node_ntask=$(((node_end-node_beg+node_step-1)/node_step))
+    ((node_ntask>0)) || break
 
     local jobdir
     cmd:submit/make-jobdir || return 1
@@ -442,47 +442,59 @@ function cmd:submit {
       tail -n +5 "$quecon_data_path"/template/sub.sh
     } > "$fsub"
 
-    local rep2block=$(((end-beg+range_core-1)/range_core))
-    local rep2ijob=$beg rep2i=0
-    for ((rep2ijob=beg;rep2ijob<end;rep2ijob+=rep2block,rep2i++)); do
-      local rep2beg=$rep2ijob rep2end=$((rep2ijob+rep2block))
-      ((rep2end>end)) && rep2end=$end
-      local rep2count=$((rep2end-rep2beg))
-      ((rep2count>0)) || break
-
-      local fjob=$jobdir/job$rep2i.sh
+    local icore
+    for ((icore=0;icore<range_core;icore++)); do
+      local core_beg=$((node_beg+icore*node_step))
+      local core_end=$range_end
+      local core_step=$((range_node*range_core))
+      ((core_beg<core_end)) || break
+      
+      local fjob=$jobdir/job$icore.sh
       {
         echo '#!/usr/bin/env bash'
         echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
         echo "QUECON_COMMAND='${command1//$q/$Q}'"
-        echo "QUECON_REPNODE='${rep2i//$q/$Q}'"
-        echo "QUECON_REPBEG='${rep2beg//$q/$Q}'"
-        echo "QUECON_REPEND='${rep2end//$q/$Q}'"
+        echo "QUECON_REPNODE='${icore//$q/$Q}'"
+        echo "QUECON_REPBEG='${core_beg//$q/$Q}'"
+        echo "QUECON_REPEND='${core_end//$q/$Q}'"
+        echo "QUECON_REPSTEP='${core_step//$q/$Q}'"
         echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
         echo "QUECON_PWD='${PWD//$q/$Q}'"
         echo "QUECON_HOME='${HOME//$q/$Q}'"
-        tail -n +10 "$quecon_data_path"/template/job.sh
+        tail -n +11 "$quecon_data_path"/template/job.sh
       } > "$fjob"
     done
 
     chmod +x "$jobdir"/*.sh
 
-    local date=$(date +"%F %T %Z")
+    # repeat の説明
     local job_range_suffix=
     local cmd_range_suffix=
     local log_range_suffix=
     if [[ $flags == *r* ]]; then
-      log_range_suffix=" (range $beg:$end)"
-      job_range_suffix="[$beg:$end]"
-      cmd_range_suffix=" (${range_rep:+$range_rep=}$beg:$end)"
+      local repeat_text
+      if ((node_ntask==1)); then
+        repeat_text=$node_beg
+      elif ((node_step==1)); then
+        local node_max=$((node_beg+(node_ntask-1)))
+        repeat_text={$node_beg..$node_max}
+      else
+        local node_max=$((node_beg+(node_ntask-1)*node_step))
+        repeat_text={$node_beg..$node_max..$node_step}
+      fi
+      log_range_suffix=" repeat=$repeat_text"
+      job_range_suffix="$repeat_text"
+      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text}"
     fi
+
+    local date=$(date +"%F %T %Z")
     echo "submit: $command$cmd_range_suffix"
     echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
     echo "[$date] QUECON submit" >> "$flog"
     {
       echo "command='${command//$q/$Q}$cmd_range_suffix'"
       echo "cwd='${PWD//$q/$Q}'"
-      echo "ntask=$((end-beg))"
+      echo "ntask=$node_ntask"
       echo "stat=P"
     } >> "$fstat"
     if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
