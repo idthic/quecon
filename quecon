@@ -132,9 +132,10 @@ function quecon/readargs/define-array-option {
 
 #-----------------------------------------------------------------------------
 
-quecon/readargs/define-scalar-option system-submit D:chdir  chdir
-quecon/readargs/define-scalar-option system-submit n:ntasks ntask unsigned
-quecon/readargs/define-scalar-option system-submit J:job-name job_name
+quecon/readargs/define-scalar-option system-submit D:chdir     chdir
+quecon/readargs/define-scalar-option system-submit n:ntasks    ntask unsigned
+quecon/readargs/define-scalar-option system-submit J:job-name  job_name
+quecon/readargs/define-scalar-option system-submit q:queue     queue
 function quecon/readargs:system-submit/process-argument {
   if [[ $script ]]; then
     quecon/readargs/argerr "redundant argument '$arg'." >&2
@@ -148,9 +149,9 @@ function quecon/readargs:system-submit/process-argument {
 }
 
 ## @fn quecon/system/submit.readargs [-wnJ OPTARG] SCRIPT
-##   @var[out] floags chdir ntask job_name script
+##   @var[out] flags chdir ntask job_name script
 function quecon/system/submit.readargs {
-  flags= chdir=$PWD ntask=1 job_name=unnamed script=
+  flags= chdir=$PWD ntask=1 job_name=unnamed queue= script=
   quecon/readargs system-submit "$@"
   if [[ ! $script ]]; then
     echo "quecon submit: script is not specified." >&2
@@ -159,12 +160,27 @@ function quecon/system/submit.readargs {
   [[ $flags != *E* ]]
 }
 
-function quecon/system:slurm/submit {
-  local flags chdir ntask job_name script
-  local partition=${slurm_partition:-amd_256}
+function quecon/system:direct/submit {
+  local flags chdir ntask job_nam=unamed queue script
   quecon/system/submit.readargs "$@" || return "$?"
+  (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
+  echo "system=direct:$!" >> "$fstat"
+  return 0
+}
+function quecon/system:direct/emitdef {
+  echo 'start_thread() { eval "$1"; }'
+}
+function quecon/system:direct/kill {
+  local process_id=${1#*:}
+  kill -9 -- -"$process_id"
+}
+
+function quecon/system:slurm/submit {
+  local flags chdir ntask job_name queue script
+  quecon/system/submit.readargs "$@" || return "$?"
+  : "${queue:=${slurm_partition:-amd_256}}"
   local submit_stdout
-  submit_stdout=$(cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$partition" -J "$job_name" "$script"); local ext=$?
+  submit_stdout=$(cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$queue" -J "$job_name" "$script"); local ext=$?
   if ((ext==0)); then
     local jobid=$(grep -Eo '[0-9]*' <<< $submit_stdout)
     [[ $jobid ]] && echo "system=slurm:$jobid" >> "$fstat"
@@ -179,21 +195,6 @@ function quecon/system:slurm/emitdef {
 function quecon/system:slurm/kill {
   local jobid=${1#*:}
   scancel "$jobid"
-}
-
-function quecon/system:direct/submit {
-  local flags chdir ntask job_name script
-  quecon/system/submit.readargs "$@" || return "$?"
-  (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
-  echo "system=direct:$!" >> "$fstat"
-  return 0
-}
-function quecon/system:direct/emitdef {
-  echo 'start_thread() { eval "$1"; }'
-}
-function quecon/system:direct/kill {
-  local process_id=${1#*:}
-  kill -9 -- -"$process_id"
 }
 
 #-----------------------------------------------------------------------------
@@ -570,7 +571,7 @@ function cmd:stat/print-help {
          '' \
          'usage: quecon submit [-ct|-C BIN|-r REPEAT|--system SYSTEM] COMMAND' \
          'Submit jobs.' \
-         '  --system=SYS  Select job scheduker. SYS = "direct", or "slurm"' \
+         '  --system=SYS  Select job scheduler. SYS = "direct", or "slurm"' \
          '  -c, --copy    Copy the script file.' \
          '  -C, --copy-binary=BIN' \
          '                Copy the binary found in PATH.' \
@@ -584,6 +585,9 @@ function cmd:stat/print-help {
          '    END         Ending index of repeat. Exclusive.' \
          '    NNODE       Number of job submissions used for repeating.' \
          '    NCORE       Number of commands parally executed in a job.' \
+         '  slurm_partition=PARTITION' \
+         '                The partition name passed to Slurm'\''s "sbatch" with the "-p"' \
+         '                option.' \
          ''
 }
 function cmd:stat {
