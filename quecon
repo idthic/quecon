@@ -3,8 +3,13 @@
 shopt -s nullglob
 quecon_prefix=~/.opt/idt
 quecon_data_path=$quecon_prefix/share/quecon
-quecon_tmpdir_base=/dev/shm/$UID.$USER
-quecon_system=slurm
+quecon_tmpdir_base=${XDG_RUNTIME_DIR:-/dev/shm/$UID.$USER}
+quecon_system=direct
+
+rcfile=${XDG_CONFIG_HOME:-$HOME/.config}/quecon/init.bash
+if [[ -e $rcfile ]]; then
+  source "$rcfile"
+fi
 
 function quecon/is-function { declare -f "$1" &>/dev/null; }
 function quecon/function#try { if quecon/is-function "$1"; then "$@"; else return 127; fi; }
