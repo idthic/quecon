@@ -746,6 +746,30 @@ function cmd:archive {
   fi
 }
 
+## @option -f ... Remove the entry even if the kill command fails.
+quecon/readargs/define-flag-option kill f:force f
+function quecon/readargs:kill/process-argument {
+  if [[ $job ]]; then
+    quecon/readargs/argerr "redundant argument '$arg'." >&2
+    return 1
+  fi
+  if [[ ! $arg ]]; then
+    quecon/readargs/argerr "invalid argument '$arg'." >&2
+    return 1
+  fi
+  job=$arg
+}
+## @fn quecon/kill.readargs [-f] SCRIPT
+##   @var[out] flags job
+function quecon/kill.readargs {
+  flags= job=
+  quecon/readargs kill "$@"
+  if [[ ! $job ]]; then
+    echo "quecon kill: <job> is not specified." >&2
+    flags=E$flags
+  fi
+  [[ $flags != *E* ]]
+}
 function cmd:kill/proc {
   [[ -s stat.sh ]] || return 1
   local command=- cwd=- node=- time_start= time_end= system=
@@ -761,7 +785,7 @@ function cmd:kill/proc {
   fi
 
   local job_system=${system%%:*}
-  if quecon/system:"$job_system"/kill "${system}"; then
+  if quecon/system:"$job_system"/kill "${system}" || [[ $kill_flags == *f* ]]; then
     {
       echo "stat=K"
       date +'time_end=%s'
@@ -773,7 +797,10 @@ function cmd:kill/proc {
   fi
 }
 function cmd:kill {
-  quecon/jobdir-eval "$1" 'cmd:kill/proc'
+  local flags job
+  quecon/kill.readargs "$@" || return 2
+  local kill_flags=$flags
+  quecon/jobdir-eval "$job" 'cmd:kill/proc'
 }
 
 #------------------------------------------------------------------------------
