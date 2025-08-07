@@ -212,8 +212,11 @@ function quecon/system:pbs/emitdef {
   local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
 
-  [[ ${job_name-} ]] &&
+  local q=\' Q="'\''"
+  if [[ ${job_name-} ]]; then
+    job_name=${job_name//[[:space:][:cntrl:]]/-}
     quecon/print "#PBS -N $job_name"
+  fi
   [[ ${quecon_submit_queue-} ]] &&
     quecon/print "#PBS -q $quecon_submit_queue"
   [[ ${quecon_submit_group-} ]] &&
@@ -223,6 +226,8 @@ function quecon/system:pbs/emitdef {
     quecon/print "#PBS -l elapstim_req=$quecon_submit_timelimit"
   [[ ${quecon_submit_memlimit-} ]] &&
     quecon/print "#PBS -l memsz_job=$quecon_submit_memlimit"
+  quecon/print "#PBS -e ${chdir:-.}/sub.e"
+  quecon/print "#PBS -o ${chdir:-.}/sub.o"
 
   [[ ${quecon_submit_initcode-} ]] &&
     quecon/print "$quecon_submit_initcode"
@@ -241,7 +246,14 @@ function quecon/system:pbs/submit {
   if ((ext==0)); then
     local jobid=
     if quecon/string#match "$submit_stdout" 'Request ([^[:space:]]+)'; then
-      jobid=${BASH_REMATCH[1]}
+      if [[ ${BASH_REMATCH[1]} == not ]]; then
+        # Note: PBS outputs "Request not queued." with exit status 0 when
+        # submitting the job fails.  When "not" is extracted as a job ID, we
+        # manually set ext=1 to signal the submission failure.
+        ext=1
+      else
+        jobid=${BASH_REMATCH[1]}
+      fi
     elif quecon/string#match "$submit_stdout" '\b[0-9]+(\.[a-zA-Z0-9_]+)?\b'; then
       jobid=${BASH_REMATCH[0]}
     fi
@@ -250,9 +262,11 @@ function quecon/system:pbs/submit {
   echo "$submit_stdout"
   return "$ext"
 }
-function quecon/system:slurm/kill {
-  local jobid=${1#*:}
-  qdel "$jobid"
+function quecon/system:pbs/kill {
+  if [[ $1 ]]; then
+    local jobid=${1#*:}
+    qdel "$jobid"
+  fi
 }
 
 #-----------------------------------------------------------------------------
@@ -504,8 +518,9 @@ function cmd:submit {
       fi
       log_range_suffix=" repeat=$repeat_text"
       job_range_suffix="$repeat_text"
-      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text}"
+      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text)"
     fi
+    local job_title=$job_name${job_range_suffix:+/$job_range_suffix}
 
     local fsub=$jobdir/sub.sh
     local flog=$jobdir/stat.log
@@ -515,7 +530,7 @@ function cmd:submit {
       [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
 
       echo '#!/usr/bin/env bash'
-      quecon/system:"$job_system"/emitdef -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$fsub"
+      quecon/system:"$job_system"/emitdef -D "$jobdir" -n "$range_core" -J "$job_title" "$fsub"
       echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
       echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
       tail -n +5 "$quecon_data_path"/template/sub.sh
@@ -556,7 +571,7 @@ function cmd:submit {
       echo "ntask=$node_ntask"
       echo "stat=P"
     } >> "$fstat"
-    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$fsub"; then
+    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_title" "$fsub"; then
       echo "quecon:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"
@@ -651,14 +666,14 @@ function cmd:stat/print-help {
          '                specified by "-q".' \
          '  quecon_submit_group=GROUP' \
          '                Specify the group.  In the case of PBS, this corresponds to' \
-         '                the group specified by "--group=".'
+         '                the group specified by "--group=".' \
          '  quecon_submit_timelimit=TIME' \
          '                Specify the time limit.  In the case of PBS, this corresponds' \
          '                to the time limit in the form "HH:MM:SS" specified by "-l' \
          '                elapstim_req=".' \
          '  quecon_submit_memlimit=TIME' \
          '                Specify the memory limit.  In the case of PBS, this corresponds' \
-         '                to the memory limit in the form e.g. "<num>G" specified by "-l' \
+         '                to the memory limit in the form e.g. "<num>GB" specified by "-l' \
          '                memsz_job=".' \
          ''
 }
