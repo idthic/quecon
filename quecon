@@ -633,6 +633,7 @@ function cmd:stat/print-help {
          'Show details of the specified job.' \
          '  NUM           Select job by the job index' \
          '  TYPE          One of the following values [default: log]:' \
+         '    path        Show the path to the job directory' \
          '    log         Dump log' \
          '    out         Dump stdout/stderr.' \
          '    tail        Show tail of stdout/stderr.' \
@@ -693,6 +694,8 @@ function cmd:stat {
   fi
 
   case $type in
+  (path)
+    quecon/jobdir-eval "$id" 'echo $PWD' ;;
   (''|log)
     quecon/jobdir-eval "$id" 'cat stat.log' ;;
   (out|tail)
