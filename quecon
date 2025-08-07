@@ -13,10 +13,17 @@ fi
 
 function quecon/is-function { declare -f "$1" &>/dev/null; }
 function quecon/function#try { if quecon/is-function "$1"; then "$@"; else return 127; fi; }
+function quecon/print { printf '%s\n' "${1-}"; }
+function quecon/print-lines {
+  if (($#)); then
+    printf '%s\n' "$@"
+  fi
+}
 
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
 function mkpd { [[ $1 == ?*/* ]] && mkd "${1%/*}"; }
 
+function quecon/string#match { [[ $1 =~ $2 ]]; }
 function quecon/string#seconds-to-human {
   local time=$1
   if ((time<3600)); then
@@ -140,7 +147,6 @@ function quecon/readargs/define-array-option {
 quecon/readargs/define-scalar-option system-submit D:chdir     chdir
 quecon/readargs/define-scalar-option system-submit n:ntasks    ntask unsigned
 quecon/readargs/define-scalar-option system-submit J:job-name  job_name
-quecon/readargs/define-scalar-option system-submit q:queue     queue
 function quecon/readargs:system-submit/process-argument {
   if [[ $script ]]; then
     quecon/readargs/argerr "redundant argument '$arg'." >&2
@@ -156,7 +162,7 @@ function quecon/readargs:system-submit/process-argument {
 ## @fn quecon/system/submit.readargs [-wnJ OPTARG] SCRIPT
 ##   @var[out] flags chdir ntask job_name script
 function quecon/system/submit.readargs {
-  flags= chdir=$PWD ntask=1 job_name=unnamed queue= script=
+  flags= chdir=$PWD ntask=1 job_name=unnamed script=
   quecon/readargs system-submit "$@"
   if [[ ! $script ]]; then
     echo "quecon submit: script is not specified." >&2
@@ -166,7 +172,7 @@ function quecon/system/submit.readargs {
 }
 
 function quecon/system:direct/submit {
-  local flags chdir ntask job_nam=unamed queue script
+  local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
   echo "system=direct:$!" >> "$fstat"
@@ -181,9 +187,9 @@ function quecon/system:direct/kill {
 }
 
 function quecon/system:slurm/submit {
-  local flags chdir ntask job_name queue script
+  local flags chdir ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
-  : "${queue:=${slurm_partition:-amd_256}}"
+  local queue=${slurm_partition:-${quecon_submit_queue:-amd_256}}
   local submit_stdout
   submit_stdout=$(cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$queue" -J "$job_name" "$script"); local ext=$?
   if ((ext==0)); then
@@ -200,6 +206,53 @@ function quecon/system:slurm/emitdef {
 function quecon/system:slurm/kill {
   local jobid=${1#*:}
   scancel "$jobid"
+}
+
+function quecon/system:pbs/emitdef {
+  local flags chdir ntask job_name script
+  quecon/system/submit.readargs "$@" || return "$?"
+
+  [[ ${job_name-} ]] &&
+    quecon/print "#PBS -N $job_name"
+  [[ ${quecon_submit_queue-} ]] &&
+    quecon/print "#PBS -q $quecon_submit_queue"
+  [[ ${quecon_submit_group-} ]] &&
+    quecon/print "#PBS --group=$quecon_submit_group"
+  quecon/print "#PBS -l cpunum_job=$ntask"
+  [[ ${quecon_submit_timelimit-} ]] &&
+    quecon/print "#PBS -l elapstim_req=$quecon_submit_timelimit"
+  [[ ${quecon_submit_memlimit-} ]] &&
+    quecon/print "#PBS -l memsz_job=$quecon_submit_memlimit"
+
+  [[ ${quecon_submit_initcode-} ]] &&
+    quecon/print "$quecon_submit_initcode"
+  quecon/print 'cd "$PBS_O_WORKDIR"'
+  echo 'start_thread() { eval "$1"; }'
+}
+function quecon/system:pbs/submit {
+  local flags chdir ntask job_name script
+  quecon/system/submit.readargs "$@" || return "$?"
+
+  # Note: We go to the job directory so that stdout/stderr files saved by PBS
+  # will be created in the job directory.  After starting the script in the job
+  # directory, we move to the proper directory inside jobN.sh.
+  local submit_stdout
+  submit_stdout=$(cd "$chdir"; qsub "$script"); local ext=$?
+  if ((ext==0)); then
+    local jobid=
+    if quecon/string#match "$submit_stdout" 'Request ([^[:space:]]+)'; then
+      jobid=${BASH_REMATCH[1]}
+    elif quecon/string#match "$submit_stdout" '\b[0-9]+(\.[a-zA-Z0-9_]+)?\b'; then
+      jobid=${BASH_REMATCH[0]}
+    fi
+    [[ $jobid ]] && echo "system=pbs:$jobid" >> "$fstat"
+  fi
+  echo "$submit_stdout"
+  return "$ext"
+}
+function quecon/system:slurm/kill {
+  local jobid=${1#*:}
+  qdel "$jobid"
 }
 
 #-----------------------------------------------------------------------------
@@ -434,6 +487,26 @@ function cmd:submit {
       cmd:submit/save-binary "$bin_name" "$jobdir/bin/${bin_name##*/}" || return 1
     done
 
+    # repeat の説明
+    local job_range_suffix=
+    local cmd_range_suffix=
+    local log_range_suffix=
+    if [[ $flags == *r* ]]; then
+      local repeat_text
+      if ((node_ntask==1)); then
+        repeat_text=$node_beg
+      elif ((node_step==1)); then
+        local node_max=$((node_beg+(node_ntask-1)))
+        repeat_text={$node_beg..$node_max}
+      else
+        local node_max=$((node_beg+(node_ntask-1)*node_step))
+        repeat_text={$node_beg..$node_max..$node_step}
+      fi
+      log_range_suffix=" repeat=$repeat_text"
+      job_range_suffix="$repeat_text"
+      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text}"
+    fi
+
     local fsub=$jobdir/sub.sh
     local flog=$jobdir/stat.log
     local fstat=$jobdir/stat.sh
@@ -442,9 +515,9 @@ function cmd:submit {
       [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
 
       echo '#!/usr/bin/env bash'
+      quecon/system:"$job_system"/emitdef -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$fsub"
       echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
       echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
-      quecon/system:"$job_system"/emitdef
       tail -n +5 "$quecon_data_path"/template/sub.sh
     } > "$fsub"
 
@@ -473,26 +546,6 @@ function cmd:submit {
 
     chmod +x "$jobdir"/*.sh
 
-    # repeat の説明
-    local job_range_suffix=
-    local cmd_range_suffix=
-    local log_range_suffix=
-    if [[ $flags == *r* ]]; then
-      local repeat_text
-      if ((node_ntask==1)); then
-        repeat_text=$node_beg
-      elif ((node_step==1)); then
-        local node_max=$((node_beg+(node_ntask-1)))
-        repeat_text={$node_beg..$node_max}
-      else
-        local node_max=$((node_beg+(node_ntask-1)*node_step))
-        repeat_text={$node_beg..$node_max..$node_step}
-      fi
-      log_range_suffix=" repeat=$repeat_text"
-      job_range_suffix="$repeat_text"
-      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text}"
-    fi
-
     local date=$(date +"%F %T %Z")
     echo "submit: $command$cmd_range_suffix"
     echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
@@ -503,7 +556,7 @@ function cmd:submit {
       echo "ntask=$node_ntask"
       echo "stat=P"
     } >> "$fstat"
-    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$jobdir/sub.sh"; then
+    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_name$job_range_suffix" "$fsub"; then
       echo "quecon:${jobdir##*/}: failed to submit" >&2
       echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
       echo "stat=F" >> "$fstat"
@@ -590,9 +643,23 @@ function cmd:stat/print-help {
          '    END         Ending index of repeat. Exclusive.' \
          '    NNODE       Number of job submissions used for repeating.' \
          '    NCORE       Number of commands parally executed in a job.' \
-         '  slurm_partition=PARTITION' \
-         '                The partition name passed to Slurm'\''s "sbatch" with the "-p"' \
-         '                option.' \
+         '  quecon_submit_queue=CLASS' \
+         '  slurm_partition=PARTITION (deprecated)' \
+         '                Specify the queue/job-class/partition of the job scheduler.  In' \
+         '                the case of Slurm, this corresponds to the partition specified' \
+         '                by "-p".  In the case of PBS, this corresponds to the queue' \
+         '                specified by "-q".' \
+         '  quecon_submit_group=GROUP' \
+         '                Specify the group.  In the case of PBS, this corresponds to' \
+         '                the group specified by "--group=".'
+         '  quecon_submit_timelimit=TIME' \
+         '                Specify the time limit.  In the case of PBS, this corresponds' \
+         '                to the time limit in the form "HH:MM:SS" specified by "-l' \
+         '                elapstim_req=".' \
+         '  quecon_submit_memlimit=TIME' \
+         '                Specify the memory limit.  In the case of PBS, this corresponds' \
+         '                to the memory limit in the form e.g. "<num>G" specified by "-l' \
+         '                memsz_job=".' \
          ''
 }
 function cmd:stat {
