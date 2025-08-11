@@ -183,7 +183,12 @@ function quecon/system:direct/emitdef {
 }
 function quecon/system:direct/kill {
   local process_id=${1#*:}
-  kill -9 -- -"$process_id"
+  local pgid=$(ps -o pgid -p "$process_id" | awk '$1 ~ /^[0-9]+$/ {print $1}')
+  [[ $pgid ]] || pgid=$process_id
+  kill -- "-$pgid"
+  sleep 1
+  kill -9 -- "-$pgid" 2>/dev/null
+  ! kill -0 -- "-$pgid" 2>/dev/null
 }
 
 function quecon/system:slurm/submit {
