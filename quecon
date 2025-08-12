@@ -612,7 +612,7 @@ function quecon/readargs:stat/process-argument {
 ## @fn cmd:stat/list
 ##   @var[in] flags
 function cmd:stat/list {
-  echo 'INDE JOB_ID             NODE       STAT   COMMAND'
+  echo 'INDE JOB_ID             NODE       STAT   TIME   COMMAND'
 
   local jobdir index=0
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
