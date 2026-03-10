@@ -681,6 +681,12 @@ function cmd:stat/print-help {
          '                Specify the memory limit.  In the case of PBS, this corresponds' \
          '                to the memory limit in the form e.g. "<num>GB" specified by "-l' \
          '                memsz_job=".' \
+         '' \
+         'usage: quecon kill [-f] NUM' \
+         'Kill the specified job.' \
+         '' \
+         'usage: quecon archive' \
+         'Compress the finished entries.' \
          ''
 }
 function cmd:stat {
