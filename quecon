@@ -585,9 +585,10 @@ function cmd:submit {
   done
 }
 
-quecon/readargs/define-flag-option stat a:all   a
-quecon/readargs/define-flag-option stat help    H
-quecon/readargs/define-flag-option stat version V
+quecon/readargs/define-flag-option stat a:all        a
+quecon/readargs/define-flag-option stat A:all-record A
+quecon/readargs/define-flag-option stat help         H
+quecon/readargs/define-flag-option stat version      V
 function quecon/readargs:stat/process-argument {
   if [[ ! $id ]]; then
     if [[ ! $arg || ${arg//[0-9]} ]]; then
@@ -613,6 +614,22 @@ function quecon/readargs:stat/process-argument {
 ##   @var[in] flags
 function cmd:stat/list {
   echo 'INDE JOB_ID             NODE       STAT   TIME   COMMAND'
+  if [[ $flags == *A* ]]; then
+    local -a stat_files=()
+    local stat_file
+    for stat_file in "$quecon_data_path"/jobs/[2-9]???????.stat; do
+      stat_files+=("$stat_file")
+      local i=1 stat_file_sub
+      while
+        stat_file_sub=${stat_file%.stat}-$i.stat
+        [[ -f $stat_file_sub ]]
+      do
+        stat_files+=("$stat_file_sub")
+        ((i++))
+      done
+    done
+    ((${#stat_files[@]})) && cat "${stat_files[@]}"
+  fi
 
   local jobdir index=0
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
