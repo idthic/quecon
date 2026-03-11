@@ -143,8 +143,12 @@ function quecon/readargs/define-array-option {
 }
 
 #-----------------------------------------------------------------------------
+# quecon/system
+#
+# The logics that depends on the job scheduler are encapsulated here.
 
 quecon/readargs/define-scalar-option system-submit D:chdir     chdir
+quecon/readargs/define-scalar-option system-submit N:nnodes    nnode unsigned
 quecon/readargs/define-scalar-option system-submit n:ntasks    ntask unsigned
 quecon/readargs/define-scalar-option system-submit J:job-name  job_name
 function quecon/readargs:system-submit/process-argument {
@@ -160,9 +164,9 @@ function quecon/readargs:system-submit/process-argument {
 }
 
 ## @fn quecon/system/submit.readargs [-wnJ OPTARG] SCRIPT
-##   @var[out] flags chdir ntask job_name script
+##   @var[out] flags chdir nnode ntask job_name script
 function quecon/system/submit.readargs {
-  flags= chdir=$PWD ntask=1 job_name=unnamed script=
+  flags= chdir=$PWD nnode=1 ntask=1 job_name=unnamed script=
   quecon/readargs system-submit "$@"
   if [[ ! $script ]]; then
     echo "quecon submit: script is not specified." >&2
@@ -171,15 +175,15 @@ function quecon/system/submit.readargs {
   [[ $flags != *E* ]]
 }
 
+function quecon/system:direct/supports-multinode { return 0; }
+function quecon/system:direct/emit-submit-header { echo 'system_start_node() { eval -- "$1"; }'; }
+function quecon/system:direct/emit-node-header { echo 'system_start_core() { eval -- "$1"; }'; }
 function quecon/system:direct/submit {
-  local flags chdir ntask job_name script
+  local flags chdir nnode ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
   echo "system=direct:$!" >> "$fstat"
   return 0
-}
-function quecon/system:direct/emitdef {
-  echo 'start_thread() { eval "$1"; }'
 }
 function quecon/system:direct/kill {
   local process_id=${1#*:}
@@ -191,12 +195,31 @@ function quecon/system:direct/kill {
   ! kill -0 -- "-$pgid" 2>/dev/null
 }
 
+# Note: "system:slurm" is tested on Yukawa-21, Yukawa Institute for Theoretical
+# Physics, Kyoto University.
+function quecon/system:slurm/supports-multinode { return 1; }
+function quecon/system:slurm/emit-submit-header {
+  #echo 'system_start_core() { srun -n 1 "$1"; }'
+  echo 'system_start_node() { eval -- "$1"; }'
+}
+function quecon/system:slurm/emit-node-header {
+  #echo 'system_start_core() { srun -n 1 "$1"; }'
+  echo 'system_start_core() { eval -- "$1"; }'
+}
 function quecon/system:slurm/submit {
-  local flags chdir ntask job_name script
+  local flags chdir nnode ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
+  if ((nnode!=1)); then
+    # Note: We haven't yet supported to branch the running scripts based on the
+    # node ID.  We need to check the behavior of the actual system and identify
+    # how to run one script per one node.
+    quecon/print 'quecon/system:slurm: only "nnode=1" is supported currently.' >&2
+    return 1
+  fi
+
   local queue=${slurm_partition:-${quecon_submit_queue:-amd_256}}
   local submit_stdout
-  submit_stdout=$(cd "$chdir"; sbatch -N 1 -n "$ntask" -p "$queue" -J "$job_name" "$script"); local ext=$?
+  submit_stdout=$(cd "$chdir"; sbatch -N "$nnode" -n "$ntask" -p "$queue" -J "$job_name" "$script"); local ext=$?
   if ((ext==0)); then
     local jobid=$(grep -Eo '[0-9]*' <<< $submit_stdout)
     [[ $jobid ]] && echo "system=slurm:$jobid" >> "$fstat"
@@ -204,17 +227,17 @@ function quecon/system:slurm/submit {
   echo "$submit_stdout"
   return "$ext"
 }
-function quecon/system:slurm/emitdef {
-  #echo 'start_thread() { srun -n 1 "$1"; }'
-  echo 'start_thread() { eval "$1"; }'
-}
 function quecon/system:slurm/kill {
   local jobid=${1#*:}
   scancel "$jobid"
 }
 
-function quecon/system:pbs/emitdef {
-  local flags chdir ntask job_name script
+# Note: "system:pbs" is tested on SQUID, D3 Center, the University of Osaka.
+# The actual behavior may depend on the PBS system, so one needs to check the
+# behavior when one is going to use a PBS system on a different system.
+function quecon/system:pbs/supports-multinode { return 0; }
+function quecon/system:pbs/emit-submit-header {
+  local flags chdir nnode ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
 
   local q=\' Q="'\''"
@@ -226,6 +249,8 @@ function quecon/system:pbs/emitdef {
     quecon/print "#PBS -q $quecon_submit_queue"
   [[ ${quecon_submit_group-} ]] &&
     quecon/print "#PBS --group=$quecon_submit_group"
+  ((nnode >= 2)) &&
+    quecon/print "#PBS -b $nnode"
   quecon/print "#PBS -l cpunum_job=$ntask"
   [[ ${quecon_submit_timelimit-} ]] &&
     quecon/print "#PBS -l elapstim_req=$quecon_submit_timelimit"
@@ -236,11 +261,19 @@ function quecon/system:pbs/emitdef {
 
   [[ ${quecon_submit_initcode-} ]] &&
     quecon/print "$quecon_submit_initcode"
-  quecon/print 'cd "$PBS_O_WORKDIR"'
-  echo 'start_thread() { eval "$1"; }'
+  quecon/print 'cd "$PBS_O_WORKDIR"
+if [[ $PBS_JOBID == *:* ]]; then
+  QUECON_NODE=${PBS_JOBID%%:*}
+else
+  QUECON_NODE=fail
+fi
+system_start_node() { eval -- "$1"; }'
+}
+function quecon/system:pbs/emit-node-header {
+  echo 'system_start_core() { eval -- "$1"; }'
 }
 function quecon/system:pbs/submit {
-  local flags chdir ntask job_name script
+  local flags chdir nnode ntask job_name script
   quecon/system/submit.readargs "$@" || return "$?"
 
   # Note: We go to the job directory so that stdout/stderr files saved by PBS
@@ -307,11 +340,26 @@ function quecon/get-job-info {
   local fail=0 done=0 ntask=1
   local command=- cwd=- node=- time_start= time_end= system=
 
+  # Note: "$jobdir"/stat?*.sh are the count files in the older directory
+  # structure (before 2026-03-12).  We may remove the support after a while.
   local stat_sh
   for stat_sh in "$jobdir"/stat.sh "$jobdir"/stat?*.sh; do
     [[ -s $stat_sh ]] || continue
     source "$stat_sh"
   done
+  if
+    count_files=("$jobdir"/node?*/count.txt)
+    ((${#count_files[@]}))
+  then
+    builtin eval -- "$(
+      awk '
+        /fail/ { fail++; }
+        /done/ { done++; }
+        END { printf("((fail += %d, done += %d))\n", fail, done); }
+      ' "${count_files[@]}"
+    )"
+  fi
+
   [[ $stat == - && -s $jobdir/complete.mark ]] && stat=C
 
   local sgr_stat=
@@ -461,11 +509,157 @@ function cmd:submit/readargs {
   [[ $flags != *E* ]]
 }
 
+## @fn cmd:submit/.submit-rjob
+##   @var[in] flags
+##   @var[in] command
+##   @var[in] job_name
+##   @var[in] bin_names
+##   @var[in] job_system
+##   @var[in] submit_hash
+##   @var[in] range_rep
+##   @var[in] rjob_beg
+##   @var[in] rjob_end
+##   @var[in] rjob_step
+##   @var[in] rjob_node
+##   @var[in] rjob_core
+function cmd:submit/.submit-rjob {
+  local q=\' Q="'\''"
+
+  local rjob_ntask=$(((rjob_end-rjob_beg+rjob_step-1)/rjob_step))
+  ((rjob_ntask>0)) || break
+
+  local jobdir
+  cmd:submit/make-jobdir || return 1
+
+  # Copy executable
+  local command1=$command
+  if [[ $flags == *c* ]]; then
+    local cmd=${command%%[$IFS]*}
+    local fcmd=$jobdir/cmd.sh
+    if [[ -x $cmd ]] && cp -L "$cmd" "$fcmd"; then
+      command1=$fcmd${command:${#cmd}}
+    else
+      "quecon: failed to copy the file '$cmd'." >&2
+      return 1
+    fi
+  fi
+  local bin_name ret
+  for bin_name in "${bin_names[@]}"; do
+    cmd:submit/save-binary "$bin_name" "$jobdir/bin/${bin_name##*/}" || return 1
+  done
+
+  # repeat の説明
+  local job_range_suffix=
+  local cmd_range_suffix=
+  local log_range_suffix=
+  if [[ $flags == *r* ]]; then
+    local repeat_text
+    if ((rjob_ntask==1)); then
+      repeat_text=$rjob_beg
+    elif ((rjob_step==1)); then
+      local rjob_max=$((rjob_beg+(rjob_ntask-1)))
+      repeat_text={$rjob_beg..$rjob_max}
+    else
+      local rjob_max=$((rjob_beg+(rjob_ntask-1)*rjob_step))
+      repeat_text={$rjob_beg..$rjob_max..$rjob_step}
+    fi
+    log_range_suffix=" repeat=$repeat_text"
+    job_range_suffix="$repeat_text"
+    cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text)"
+  fi
+  local job_title=$job_name${job_range_suffix:+/$job_range_suffix}
+
+  local fsub=$jobdir/sub.sh
+  local flog=$jobdir/stat.log
+  local fstat=$jobdir/stat.sh
+  {
+    local _quecon_tmpdir=
+    [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
+
+    echo '#!/usr/bin/env bash'
+    quecon/system:"$job_system"/emit-submit-header -D "$jobdir" -N "$rjob_node" -n "$rjob_core" -J "$job_title" "$fsub"
+    echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+    echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
+    echo "QUECON_NNODE='${rjob_node//$q/$Q}'"
+    sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/sub.sh
+  } > "$fsub"
+
+  local inode
+  for ((inode=0;inode<rjob_node;inode++)); do
+    local node_beg=$((rjob_beg+inode*rjob_step))
+    local node_end=$rjob_end
+    local node_step=$((rjob_step*rjob_node))
+    local node_core=$rjob_core
+
+    local fnode
+    printf -v fnode '%s/node%03d.sh' "$jobdir" "$inode"
+    local nodedir=${fnode%.sh}
+    mkd "$nodedir"
+    {
+      echo '#!/usr/bin/env bash'
+      quecon/system:"$job_system"/emit-node-header
+      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+      echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
+      echo "QUECON_NODE='${inode//$q/$Q}'"
+      echo "QUECON_NODEDIR='${nodedir//$q/$Q}'"
+      sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/node.sh
+    } > "$fnode"
+
+    : > "$nodedir/stat.sh"
+
+    local icore
+    for ((icore=0;icore<node_core;icore++)); do
+      local core_beg=$((node_beg+icore*node_step))
+      local core_end=$node_end
+      local core_step=$((node_step*node_core))
+      ((core_beg<core_end)) || break
+
+      local fcore
+      printf -v fcore '%s/core%03d.sh' "$nodedir" "$icore"
+      {
+        echo '#!/usr/bin/env bash'
+        echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+        echo "QUECON_NODEDIR='${nodedir//$q/$Q}'"
+        echo "QUECON_COMMAND='${command1//$q/$Q}'"
+        echo "QUECON_REPNODE='${inode//$q/$Q}'"
+        echo "QUECON_REPCORE='${icore//$q/$Q}'"
+        echo "QUECON_REPBEG='${core_beg//$q/$Q}'"
+        echo "QUECON_REPEND='${core_end//$q/$Q}'"
+        echo "QUECON_REPSTEP='${core_step//$q/$Q}'"
+        echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
+        echo "QUECON_PWD='${PWD//$q/$Q}'"
+        echo "QUECON_HOME='${HOME//$q/$Q}'"
+        sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/core.sh
+      } > "$fcore"
+    done
+    chmod +x "$nodedir"/core[0-9]*.sh
+  done
+  chmod +x "$jobdir"/node[0-9]*.sh
+
+  local date=$(date +"%F %T %Z")
+  echo "submit: $command$cmd_range_suffix"
+  echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
+  echo "[$date] QUECON submit" >> "$flog"
+  {
+    echo "command='${command//$q/$Q}$cmd_range_suffix'"
+    echo "cwd='${PWD//$q/$Q}'"
+    echo "ntask=$rjob_ntask"
+    echo "stat=P"
+  } >> "$fstat"
+
+  if ! quecon/system:"$job_system"/submit -D "$jobdir" -N "$rjob_node" -n "$rjob_core" -J "$job_title" "$fsub"; then
+    echo "quecon:${jobdir##*/}: failed to submit" >&2
+    echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
+    echo "stat=F" >> "$fstat"
+    return 1
+  fi
+}
+
 function cmd:submit {
   local q=\' Q="'\''"
 
   local flags command job_name bin_names job_system
-  local range_{rep=,beg=0,end=1,node=1,core=1}
+  local range_{rep=,beg=0,end=1,step=1,node=1,core=1}
   cmd:submit/readargs "$@" || return 2
 
   local submit_hash
@@ -478,111 +672,24 @@ function cmd:submit {
   # Job name
   [[ $job_name ]] || job_name=$command
 
-  local inode
-  for ((inode=0;inode<range_node;inode++)); do
-    local node_beg=$((range_beg+inode))
-    local node_end=$range_end
-    local node_step=$range_node
-    local node_ntask=$(((node_end-node_beg+node_step-1)/node_step))
-    ((node_ntask>0)) || break
-
-    local jobdir
-    cmd:submit/make-jobdir || return 1
-
-    # Copy executable
-    local command1=$command
-    if [[ $flags == *c* ]]; then
-      local cmd=${command%%[$IFS]*}
-      local fcmd=$jobdir/cmd.sh
-      if [[ -x $cmd ]] && cp -L "$cmd" "$fcmd"; then
-        command1=$fcmd${command:${#cmd}}
-      else
-        "quecon: failed to copy the file '$cmd'." >&2
-        return 1
-      fi
-    fi
-    local bin_name ret
-    for bin_name in "${bin_names[@]}"; do
-      cmd:submit/save-binary "$bin_name" "$jobdir/bin/${bin_name##*/}" || return 1
+  if quecon/system:"$job_system"/supports-multinode; then
+    local rjob_beg=$range_beg
+    local rjob_end=$range_end
+    local rjob_step=$range_step
+    local rjob_node=$range_node
+    local rjob_core=$range_core
+    cmd:submit/.submit-rjob
+  else
+    local irjob
+    for ((irjob=0;irjob<range_node;irjob++)); do
+      local rjob_beg=$((range_beg+irjob*range_step))
+      local rjob_end=$range_end
+      local rjob_step=$((range_step*range_node))
+      local rjob_node=1
+      local rjob_core=$range_core
+      cmd:submit/.submit-rjob
     done
-
-    # repeat の説明
-    local job_range_suffix=
-    local cmd_range_suffix=
-    local log_range_suffix=
-    if [[ $flags == *r* ]]; then
-      local repeat_text
-      if ((node_ntask==1)); then
-        repeat_text=$node_beg
-      elif ((node_step==1)); then
-        local node_max=$((node_beg+(node_ntask-1)))
-        repeat_text={$node_beg..$node_max}
-      else
-        local node_max=$((node_beg+(node_ntask-1)*node_step))
-        repeat_text={$node_beg..$node_max..$node_step}
-      fi
-      log_range_suffix=" repeat=$repeat_text"
-      job_range_suffix="$repeat_text"
-      cmd_range_suffix=" (${range_rep:+$range_rep=}$repeat_text)"
-    fi
-    local job_title=$job_name${job_range_suffix:+/$job_range_suffix}
-
-    local fsub=$jobdir/sub.sh
-    local flog=$jobdir/stat.log
-    local fstat=$jobdir/stat.sh
-    {
-      local _quecon_tmpdir=
-      [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
-
-      echo '#!/usr/bin/env bash'
-      quecon/system:"$job_system"/emitdef -D "$jobdir" -n "$range_core" -J "$job_title" "$fsub"
-      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-      echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
-      tail -n +5 "$quecon_data_path"/template/sub.sh
-    } > "$fsub"
-
-    local icore
-    for ((icore=0;icore<range_core;icore++)); do
-      local core_beg=$((node_beg+icore*node_step))
-      local core_end=$range_end
-      local core_step=$((range_node*range_core))
-      ((core_beg<core_end)) || break
-      
-      local fjob=$jobdir/job$icore.sh
-      {
-        echo '#!/usr/bin/env bash'
-        echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-        echo "QUECON_COMMAND='${command1//$q/$Q}'"
-        echo "QUECON_REPNODE='${icore//$q/$Q}'"
-        echo "QUECON_REPBEG='${core_beg//$q/$Q}'"
-        echo "QUECON_REPEND='${core_end//$q/$Q}'"
-        echo "QUECON_REPSTEP='${core_step//$q/$Q}'"
-        echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
-        echo "QUECON_PWD='${PWD//$q/$Q}'"
-        echo "QUECON_HOME='${HOME//$q/$Q}'"
-        tail -n +11 "$quecon_data_path"/template/job.sh
-      } > "$fjob"
-    done
-
-    chmod +x "$jobdir"/*.sh
-
-    local date=$(date +"%F %T %Z")
-    echo "submit: $command$cmd_range_suffix"
-    echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
-    echo "[$date] QUECON submit" >> "$flog"
-    {
-      echo "command='${command//$q/$Q}$cmd_range_suffix'"
-      echo "cwd='${PWD//$q/$Q}'"
-      echo "ntask=$node_ntask"
-      echo "stat=P"
-    } >> "$fstat"
-    if ! quecon/system:"$job_system"/submit -D "$jobdir" -n "$range_core" -J "$job_title" "$fsub"; then
-      echo "quecon:${jobdir##*/}: failed to submit" >&2
-      echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
-      echo "stat=F" >> "$fstat"
-      return 1
-    fi
-  done
+  fi
 }
 
 quecon/readargs/define-flag-option stat a:all        a
@@ -647,9 +754,10 @@ function cmd:stat/print-help {
   printf '%s\n' \
          'usage: quecon [stat] [-a|--help|--version]' \
          'Show list of jobs' \
-         '  --version     Show version and exit' \
-         '  --help        Show help and exit' \
-         '  -a, --all     Show all jobs' \
+         '  --version        Show version and exit' \
+         '  --help           Show help and exit' \
+         '  -a, --all        Show all jobs' \
+         '  -A, --all-record Show all jobs including the archived ones' \
          '' \
          'usage: quecon [stat] NUM [TYPE]' \
          'Show details of the specified job.' \
@@ -737,10 +845,26 @@ function cmd:stat {
     quecon/jobdir-eval "$id" '
       [[ ! -s complete.mark && -t 1 ]] && tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
-  (stat*.sh|sub.sh|job*.sh|cmd.sh)
-    quecon/jobdir-eval "$id" 'cat '"$type" ;;
+  (cmd.sh|sub.sh|node[0-9]*.sh|node[0-9]*/core[0-9]*.sh)
+    quecon/jobdir-eval "$id" "cat $type" ;;
+  (stat.log|stat.sh|sub.out|sub.e|sub.o|complete.mark)
+    quecon/jobdir-eval "$id" "cat $type" ;;
+  (node[0-9]*/count.txt|node[0-9]*/stat.out|node[0-9]*/stat.log|node[0-9]*/stat.sh|node[0-9]*/complete.mark)
+    quecon/jobdir-eval "$id" "cat $type" ;;
+  (stat*.sh|job*.sh)
+    quecon/jobdir-eval "$id" "cat $type" ;;
   (ls)
-    quecon/jobdir-eval "$id" 'ls -la' ;;
+    local prefix=
+    if type -P colored &>/dev/null; then
+      prefix='colored '
+    fi
+    quecon/jobdir-eval "$id" "${prefix}ls -la" ;;
+  (node[0-9]*[0-9])
+    local prefix=
+    if type -P colored &>/dev/null; then
+      prefix='colored '
+    fi
+    quecon/jobdir-eval "$id" "${prefix}ls -la $type" ;;
   (*)
     echo "quecon/stat: unknown stat type '$type'" >&2
     return 2 ;;
