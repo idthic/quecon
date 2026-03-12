@@ -3,7 +3,7 @@ QUECON_JOBDIR='%%JOBDIR%%'
 QUECON_TMPDIR='%%TMPDIR%%'
 QUECON_NODE='%%NODE%%'
 QUECON_NODEDIR='%%NODEDIR%%'
-system_start_core() { builtin eval -- "$1"; }
+system_start_work() { builtin eval -- "$1"; }
 # __QUECON_END_PARAMS__
 
 exec 1> "$QUECON_NODEDIR/stat.out" 2>&1
@@ -29,9 +29,9 @@ if [[ $QUECON_TMPDIR ]]; then
   fi
 fi
 
-for fcore in "$QUECON_NODEDIR"/core[0-9]*.sh; do
-  [[ -s $fcore ]] || continue
-  system_start_core "$fcore" &
+for fwork in "$QUECON_NODEDIR"/work[0-9]*.sh; do
+  [[ -s $fwork ]] || continue
+  system_start_work "$fwork" &
 done
 wait
 
