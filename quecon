@@ -218,7 +218,7 @@ function quecon/system:slurm/submit {
     return 1
   fi
 
-  local queue=${slurm_partition:-${quecon_submit_queue:-amd_256}}
+  local queue=${job_class:-${slurm_partition:-amd_256}}
   local submit_stdout
   submit_stdout=$(cd "$chdir"; sbatch -N "$nnode" -n "$nwork" -p "$queue" -J "$job_name" "$script"); local ext=$?
   if ((ext==0)); then
@@ -246,8 +246,8 @@ function quecon/system:pbs/emit-submit-header {
     job_name=${job_name//[[:space:][:cntrl:]]/-}
     quecon/print "#PBS -N $job_name"
   fi
-  [[ ${quecon_submit_queue-} ]] &&
-    quecon/print "#PBS -q $quecon_submit_queue"
+  [[ ${job_class-} ]] &&
+    quecon/print "#PBS -q $job_class"
   [[ ${quecon_submit_group-} ]] &&
     quecon/print "#PBS --group=$quecon_submit_group"
   ((nnode >= 2)) &&
@@ -462,6 +462,7 @@ quecon/readargs/define-flag-option   submit t:create-tmpdir t
 quecon/readargs/define-array-option  submit C:copy-binary   bin_names
 quecon/readargs/define-scalar-option submit J:job-name      job_name
 quecon/readargs/define-scalar-option submit system          job_system
+quecon/readargs/define-scalar-option submit class           job_class
 function quecon/readargs:submit/option:r {
   quecon/readargs/get-optarg && range=$optarg flags=r$flags
 }
@@ -475,7 +476,7 @@ function quecon/readargs:submit/process-argument {
 }
 function cmd:submit/readargs {
   flags=
-  command= job_name= job_system=$quecon_system
+  command= job_name= job_system=$quecon_system job_class=$quecon_submit_queue
   bin_names=()
   local range
 
@@ -519,9 +520,10 @@ function cmd:submit/readargs {
 ## @fn cmd:submit/.submit-rjob
 ##   @var[in] flags
 ##   @var[in] command
-##   @var[in] job_name
 ##   @var[in] bin_names
+##   @var[in] job_name
 ##   @var[in] job_system
+##   @var[in] job_class
 ##   @var[in] submit_hash
 ##   @var[in] range_rep
 ##   @var[in] rjob_beg
@@ -667,7 +669,7 @@ function cmd:submit/.submit-rjob {
 function cmd:submit {
   local q=\' Q="'\''"
 
-  local flags command job_name bin_names job_system
+  local flags command job_name bin_names job_system job_class
   local range_{rep=,beg=0,end=1,step=1,node=1,work=1}
   cmd:submit/readargs "$@" || return 2
 
@@ -802,6 +804,7 @@ function cmd:stat/print-help {
          '    END         Ending index of repeat. Exclusive.' \
          '    NNODE       Number of job submissions used for repeating.' \
          '    NCORE       Number of commands parally executed in a job.' \
+         '  --class=CLASS' \
          '  quecon_submit_queue=CLASS' \
          '  slurm_partition=PARTITION (deprecated)' \
          '                Specify the queue/job-class/partition of the job scheduler.  In' \
