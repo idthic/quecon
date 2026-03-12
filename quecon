@@ -88,7 +88,7 @@ function quecon/readargs {
 ##   @var[in] cmdname iarg
 ##   @var[in,out] flags
 function quecon/readargs/argerr {
-  echo "quecon/$cmdname:\$$iarg: $1" >&2
+  quecon/print "quecon/$cmdname:\$$iarg: $1" >&2
   flags=E$flags
 }
 ## @fn quecon/readargs/get-optarg opts
@@ -170,20 +170,20 @@ function quecon/system/submit.readargs {
   flags= chdir=$PWD nnode=1 nwork=1 ncore=1 job_name=unnamed script=
   quecon/readargs system-submit "$@"
   if [[ ! $script ]]; then
-    echo "quecon submit: script is not specified." >&2
+    quecon/print "quecon submit: script is not specified." >&2
     flags=E$flags
   fi
   [[ $flags != *E* ]]
 }
 
 function quecon/system:direct/supports-multinode { return 0; }
-function quecon/system:direct/emit-submit-header { echo 'system_start_node() { eval -- "$1"; }'; }
-function quecon/system:direct/emit-node-header { echo 'system_start_work() { eval -- "$1"; }'; }
+function quecon/system:direct/emit-submit-header { quecon/print 'system_start_node() { eval -- "$1"; }'; }
+function quecon/system:direct/emit-node-header { quecon/print 'system_start_work() { eval -- "$1"; }'; }
 function quecon/system:direct/submit {
   local flags chdir nnode nwork ncore job_name script
   quecon/system/submit.readargs "$@" || return "$?"
   (cd "$chdir"; bash "$script" &> direct.out </dev/null) & disown
-  echo "system=direct:$!" >> "$fstat"
+  quecon/print "system=direct:$!" >> "$fstat"
   return 0
 }
 function quecon/system:direct/kill {
@@ -200,12 +200,12 @@ function quecon/system:direct/kill {
 # Physics, Kyoto University.
 function quecon/system:slurm/supports-multinode { return 1; }
 function quecon/system:slurm/emit-submit-header {
-  #echo 'system_start_work() { srun -n 1 "$1"; }'
-  echo 'system_start_node() { eval -- "$1"; }'
+  #quecon/print 'system_start_work() { srun -n 1 "$1"; }'
+  quecon/print 'system_start_node() { eval -- "$1"; }'
 }
 function quecon/system:slurm/emit-node-header {
-  #echo 'system_start_work() { srun -n 1 "$1"; }'
-  echo 'system_start_work() { eval -- "$1"; }'
+  #quecon/print 'system_start_work() { srun -n 1 "$1"; }'
+  quecon/print 'system_start_work() { eval -- "$1"; }'
 }
 function quecon/system:slurm/submit {
   local flags chdir nnode nwork ncore job_name script
@@ -223,9 +223,9 @@ function quecon/system:slurm/submit {
   submit_stdout=$(cd "$chdir"; sbatch -N "$nnode" -n "$nwork" -p "$queue" -J "$job_name" "$script"); local ext=$?
   if ((ext==0)); then
     local jobid=$(grep -Eo '[0-9]*' <<< $submit_stdout)
-    [[ $jobid ]] && echo "system=slurm:$jobid" >> "$fstat"
+    [[ $jobid ]] && quecon/print "system=slurm:$jobid" >> "$fstat"
   fi
-  echo "$submit_stdout"
+  quecon/print "$submit_stdout"
   return "$ext"
 }
 function quecon/system:slurm/kill {
@@ -271,7 +271,7 @@ fi
 system_start_node() { eval -- "$1"; }'
 }
 function quecon/system:pbs/emit-node-header {
-  echo 'system_start_work() { eval -- "$1"; }'
+  quecon/print 'system_start_work() { eval -- "$1"; }'
 }
 function quecon/system:pbs/submit {
   local flags chdir nnode nwork ncore job_name script
@@ -296,9 +296,9 @@ function quecon/system:pbs/submit {
     elif quecon/string#match "$submit_stdout" '\b[0-9]+(\.[a-zA-Z0-9_]+)?\b'; then
       jobid=${BASH_REMATCH[0]}
     fi
-    [[ $jobid ]] && echo "system=pbs:$jobid" >> "$fstat"
+    [[ $jobid ]] && quecon/print "system=pbs:$jobid" >> "$fstat"
   fi
-  echo "$submit_stdout"
+  quecon/print "$submit_stdout"
   return "$ext"
 }
 function quecon/system:pbs/kill {
@@ -313,7 +313,7 @@ function quecon/system:pbs/kill {
 
 function quecon/jobdir-eval {
   if [[ ! $1 || ${1//[0-9]} ]]; then
-    echo "quecon: invalid job_index '$1'." >&2
+    quecon/print "quecon: invalid job_index '$1'." >&2
     return 1
   fi
 
@@ -326,7 +326,7 @@ function quecon/jobdir-eval {
       return
     fi
   done
-  echo "quecon: job_index '$1' not found." >&2
+  quecon/print "quecon: job_index '$1' not found." >&2
   return 1
 }
 
@@ -412,7 +412,7 @@ function cmd:submit/make-jobdir {
     mkdir "$jobdir" 2>/dev/null && return 0
   done
   jobdir=
-  echo "quecon: failed to create job directory" >&2
+  quecon/print "quecon: failed to create job directory" >&2
   return 1
 }
 
@@ -480,7 +480,7 @@ function cmd:submit/readargs {
   quecon/readargs submit "$@"
 
   if [[ ! $command ]]; then
-    echo "quecon: command is not specified." >&2
+    quecon/print "quecon: command is not specified." >&2
     flags+=E
   fi
 
@@ -494,7 +494,7 @@ function cmd:submit/readargs {
   if [[ $range ]]; then
     local rex='([^=]+=)?([0-9]+:)?([0-9]+)(/[0-9]+(x[0-9]+(x[0-9]+)?)?)?'
     if ! [[ $range =~ $rex ]]; then
-      echo "quecon: invalid range spec '-r $range'." >&2
+      quecon/print "quecon: invalid range spec '-r $range'." >&2
       flags+=E
     fi
     range_rep=${BASH_REMATCH[1]%=}
@@ -582,11 +582,11 @@ function cmd:submit/.submit-rjob {
     local _quecon_tmpdir=
     [[ $flags == *t* ]] && _quecon_tmpdir=$quecon_tmpdir_base/${jobdir##*/}
 
-    echo '#!/usr/bin/env bash'
+    quecon/print '#!/usr/bin/env bash'
     quecon/system:"$job_system"/emit-submit-header -D "$jobdir" -N "$rjob_node" -n "$rjob_work" -c "$rjob_core" -J "$job_title" "$fsub"
-    echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-    echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
-    echo "QUECON_NNODE='${rjob_node//$q/$Q}'"
+    quecon/print "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+    quecon/print "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
+    quecon/print "QUECON_NNODE='${rjob_node//$q/$Q}'"
     sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/sub.sh
   } > "$fsub"
 
@@ -603,12 +603,12 @@ function cmd:submit/.submit-rjob {
     local nodedir=${fnode%.sh}
     mkd "$nodedir"
     {
-      echo '#!/usr/bin/env bash'
+      quecon/print '#!/usr/bin/env bash'
       quecon/system:"$job_system"/emit-node-header
-      echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-      echo "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
-      echo "QUECON_NODE='${inode//$q/$Q}'"
-      echo "QUECON_NODEDIR='${nodedir//$q/$Q}'"
+      quecon/print "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+      quecon/print "QUECON_TMPDIR='${_quecon_tmpdir//$q/$Q}'"
+      quecon/print "QUECON_NODE='${inode//$q/$Q}'"
+      quecon/print "QUECON_NODEDIR='${nodedir//$q/$Q}'"
       sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/node.sh
     } > "$fnode"
 
@@ -624,18 +624,18 @@ function cmd:submit/.submit-rjob {
       local fwork
       printf -v fwork '%s/work%03d.sh' "$nodedir" "$iwork"
       {
-        echo '#!/usr/bin/env bash'
-        echo "QUECON_JOBDIR='${jobdir//$q/$Q}'"
-        echo "QUECON_NODEDIR='${nodedir//$q/$Q}'"
-        echo "QUECON_COMMAND='${command1//$q/$Q}'"
-        echo "QUECON_INODE='${inode//$q/$Q}'"
-        echo "QUECON_IWORK='${iwork//$q/$Q}'"
-        echo "QUECON_REPBEG='${work_beg//$q/$Q}'"
-        echo "QUECON_REPEND='${work_end//$q/$Q}'"
-        echo "QUECON_REPSTEP='${work_step//$q/$Q}'"
-        echo "QUECON_REPLACE='${range_rep//$q/$Q}'"
-        echo "QUECON_PWD='${PWD//$q/$Q}'"
-        echo "QUECON_HOME='${HOME//$q/$Q}'"
+        quecon/print '#!/usr/bin/env bash'
+        quecon/print "QUECON_JOBDIR='${jobdir//$q/$Q}'"
+        quecon/print "QUECON_NODEDIR='${nodedir//$q/$Q}'"
+        quecon/print "QUECON_COMMAND='${command1//$q/$Q}'"
+        quecon/print "QUECON_INODE='${inode//$q/$Q}'"
+        quecon/print "QUECON_IWORK='${iwork//$q/$Q}'"
+        quecon/print "QUECON_REPBEG='${work_beg//$q/$Q}'"
+        quecon/print "QUECON_REPEND='${work_end//$q/$Q}'"
+        quecon/print "QUECON_REPSTEP='${work_step//$q/$Q}'"
+        quecon/print "QUECON_REPLACE='${range_rep//$q/$Q}'"
+        quecon/print "QUECON_PWD='${PWD//$q/$Q}'"
+        quecon/print "QUECON_HOME='${HOME//$q/$Q}'"
         sed -n '/__QUECON_END_PARAMS__/,$p' "$quecon_data_path"/template/work.sh
       } > "$fwork"
     done
@@ -644,20 +644,20 @@ function cmd:submit/.submit-rjob {
   chmod +x "$jobdir"/node[0-9]*.sh
 
   local date=$(date +"%F %T %Z")
-  echo "submit: $command$cmd_range_suffix"
-  echo "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
-  echo "[$date] QUECON submit" >> "$flog"
+  quecon/print "submit: $command$cmd_range_suffix"
+  quecon/print "[$date] $submit_hash JOB_ID ${jobdir##*/}$log_range_suffix" >> "$quecon_data_path"/submit.log
+  quecon/print "[$date] QUECON submit" >> "$flog"
   {
-    echo "command='${command//$q/$Q}$cmd_range_suffix'"
-    echo "cwd='${PWD//$q/$Q}'"
-    echo "ntask=$rjob_ntask"
-    echo "stat=P"
+    quecon/print "command='${command//$q/$Q}$cmd_range_suffix'"
+    quecon/print "cwd='${PWD//$q/$Q}'"
+    quecon/print "ntask=$rjob_ntask"
+    quecon/print "stat=P"
   } >> "$fstat"
 
   if ! quecon/system:"$job_system"/submit -D "$jobdir" -N "$rjob_node" -n "$rjob_work" -c "$rjob_core" -J "$job_title" "$fsub"; then
-    echo "quecon:${jobdir##*/}: failed to submit" >&2
-    echo "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
-    echo "stat=F" >> "$fstat"
+    quecon/print "quecon:${jobdir##*/}: failed to submit" >&2
+    quecon/print "[$(date +"%F %T %Z")] QUECON submit fail" >> "$flog"
+    quecon/print "stat=F" >> "$fstat"
     return 1
   fi
 }
@@ -673,8 +673,8 @@ function cmd:submit {
   printf -v submit_hash '#%04X' "$RANDOM"
   local date=$(date +"%F %T %Z")
   local ret; quote-words quecon submit "$@"
-  echo "[$date] $submit_hash $ret" >> "$quecon_data_path"/submit.log
-  echo "[$date] $submit_hash PWD='${PWD//$q/$Q}'" >> "$quecon_data_path"/submit.log
+  quecon/print "[$date] $submit_hash $ret" >> "$quecon_data_path"/submit.log
+  quecon/print "[$date] $submit_hash PWD='${PWD//$q/$Q}'" >> "$quecon_data_path"/submit.log
 
   # Job name
   [[ $job_name ]] || job_name=$command
@@ -708,14 +708,14 @@ quecon/readargs/define-flag-option stat version      V
 function quecon/readargs:stat/process-argument {
   if [[ ! $id ]]; then
     if [[ ! $arg || ${arg//[0-9]} ]]; then
-      echo "quecon: invalid job id '$arg'." >&2
+      quecon/print "quecon: invalid job id '$arg'." >&2
       flags=E$flags
     else
       id=$arg
     fi
   elif [[ ! $type ]]; then
     if [[ ! $arg ]]; then
-      echo "quecon: invalid argument ''." >&2
+      quecon/print "quecon: invalid argument ''." >&2
       flags=E$flags
     else
       type=$arg
@@ -729,7 +729,7 @@ function quecon/readargs:stat/process-argument {
 ## @fn cmd:stat/list
 ##   @var[in] flags
 function cmd:stat/list {
-  echo 'INDE JOB_ID             NODE       STAT   TIME   COMMAND'
+  quecon/print 'INDE JOB_ID             NODE       STAT   TIME   COMMAND'
   if [[ $flags == *A* ]]; then
     local -a stat_files=()
     local stat_file
@@ -840,7 +840,7 @@ function cmd:stat {
 
   case $type in
   (path)
-    quecon/jobdir-eval "$id" 'echo $PWD' ;;
+    quecon/jobdir-eval "$id" 'quecon/print $PWD' ;;
   (''|log)
     quecon/jobdir-eval "$id" 'cat stat.log' ;;
   (out|tail)
@@ -875,7 +875,7 @@ function cmd:stat {
     fi
     quecon/jobdir-eval "$id" "${prefix}ls -la $type" ;;
   (*)
-    echo "quecon/stat: unknown stat type '$type'" >&2
+    quecon/print "quecon/stat: unknown stat type '$type'" >&2
     return 2 ;;
   esac
 }
@@ -929,7 +929,7 @@ function quecon/kill.readargs {
   flags= job=
   quecon/readargs kill "$@"
   if [[ ! $job ]]; then
-    echo "quecon kill: <job> is not specified." >&2
+    quecon/print "quecon kill: <job> is not specified." >&2
     flags=E$flags
   fi
   [[ $flags != *E* ]]
@@ -944,19 +944,19 @@ function cmd:kill/proc {
   [[ $stat == C || $stat == F ]] && return 1
 
   if [[ ! $system ]]; then
-    echo "${PWD##*/}: failed to kill the job with an unknown type." >&2
+    quecon/print "${PWD##*/}: failed to kill the job with an unknown type." >&2
     return 1
   fi
 
   local job_system=${system%%:*}
   if quecon/system:"$job_system"/kill "${system}" || [[ $kill_flags == *f* ]]; then
     {
-      echo "stat=K"
+      quecon/print "stat=K"
       date +'time_end=%s'
     } >> stat.sh
     return 0
   else
-    echo "quecon ($job_system): failed to kill JOB ${PWD##*/}" >&2
+    quecon/print "quecon ($job_system): failed to kill JOB ${PWD##*/}" >&2
     return 1
   fi
 }
@@ -985,7 +985,7 @@ function main {
   # (*)
   # esac
 
-  echo "quecon: unknown subcommand '$1'" >&2
+  quecon/print "quecon: unknown subcommand '$1'" >&2
   exit 2
 }
 
