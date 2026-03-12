@@ -424,7 +424,9 @@ function cmd:submit/make-jobdir {
 function cmd:submit/save-binary {
   local src=$1 dst=$2
   local bin_path
-  if ! bin_path=$(type -p "$src"); then
+  if [[ $src == */* && -e $src ]]; then
+    bin_path=${src#./}
+  elif ! bin_path=$(type -P -- "$src"); then
     "quecon: failed to find the binary '$src'." >&2
     return 1
   fi
@@ -786,8 +788,10 @@ function cmd:stat/print-help {
          'Submit jobs.' \
          '  --system=SYS  Select job scheduler. SYS = "direct", or "slurm"' \
          '  -c, --copy    Copy the script file.' \
-         '  -C, --copy-binary=BIN' \
-         '                Copy the binary found in PATH.' \
+         '  -C, --copy-binary=FILE' \
+         '                Copy the specified executable file found in PATH.  If FILE' \
+         '                contains a slash, we instead find a file in the specified path' \
+         '                and copy it in the same directory as the main script.' \
          '  -t, --create-tmpdir' \
          '                Create temporary directory for the job and assigns the path to' \
          '                the environment QUECON_TMPDIR.' \
