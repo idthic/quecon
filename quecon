@@ -755,7 +755,7 @@ function cmd:stat/list {
   for jobdir in "$quecon_data_path"/jobs/????????-??????-*; do
     local line stat
     quecon/get-job-info "$jobdir" || continue
-    [[ $flags != *a* && $stat == [CK]* ]] && continue
+    [[ $flags != *[aA]* && $stat == [CK]* ]] && continue
     printf '%s\n' "$line"
   done
 }
