@@ -244,6 +244,12 @@ function quecon/system:pbs/emit-submit-header {
   local q=\' Q="'\''"
   if [[ ${job_name-} ]]; then
     job_name=${job_name//[[:space:][:cntrl:]]/-}
+
+    # Somehow, PBS on SQUID does not seem to allow job names starting with a
+    # digit.  We only realized that the name cannot start with a digit, but it
+    # is totally unclear whether there are other restrictions in the job name.
+    [[ $job_name == [0-9]* ]] && job_name=%$job_name
+
     quecon/print "#PBS -N $job_name"
   fi
   [[ ${job_class-} ]] &&
