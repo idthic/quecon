@@ -776,7 +776,11 @@ function cmd:stat/list {
         ((i++))
       done
     done
-    ((${#stat_files[@]})) && cat "${stat_files[@]}"
+    if ((${#stat_files[@]})); then
+      awk '
+        { sub(/^[0-9]+/, sprintf("%04d", NR)); print }
+      ' "${stat_files[@]}"
+    fi
   fi
 
   local jobdir index=0
