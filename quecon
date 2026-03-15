@@ -11,6 +11,8 @@ if [[ -e $rcfile ]]; then
   source "$rcfile"
 fi
 
+_quecon_bash=$((BASH_VERSINFO[0] * 10000 + BASH_VERSINFO[1] * 100 + BASH_VERSINFO[0]))
+
 function quecon/is-function { declare -f "$1" &>/dev/null; }
 function quecon/function#try { if quecon/is-function "$1"; then "$@"; else return 127; fi; }
 function quecon/print { printf '%s\n' "${1-}"; }
@@ -20,6 +22,12 @@ function quecon/print-lines {
   fi
 }
 
+if ((_quecon_bash > 40200)); then
+  function quecon/time { printf -v REPLY '%(%s)T' -1; }
+else
+  function quecon/time { REPLY=$(date +%s); }
+fi
+
 function mkd { [[ -d $1 ]] || mkdir -p "$1"; }
 function mkpd { [[ $1 == ?*/* ]] && mkd "${1%/*}"; }
 
@@ -27,11 +35,11 @@ function quecon/string#match { [[ $1 =~ $2 ]]; }
 function quecon/string#seconds-to-human {
   local time=$1
   if ((time<3600)); then
-    printf -v ret '%02dm%02ds' "$((time/60%60))" "$((time%60))"
+    printf -v REPLY '%02dm%02ds' "$((time/60%60))" "$((time%60))"
   elif ((time<360000)); then
-    printf -v ret '%02dh%02dm' "$((time/3600))" "$((time/60%60))"
+    printf -v REPLY '%02dh%02dm' "$((time/3600))" "$((time/60%60))"
   else
-    printf -v ret '%02dd%02dh' "$((time/3600/24))" "$((time/3600%24))"
+    printf -v REPLY '%02dd%02dh' "$((time/3600/24))" "$((time/3600%24))"
   fi
 }
 function quote-words {
@@ -389,17 +397,31 @@ function quecon/get-job-info {
     esac
   fi
 
-  local time=-
+  local time=- sgr_time= REPLY
   if [[ $time_start ]]; then
-    [[ $time_end ]] || time_end=$(date +%s)
-    local ret; quecon/string#seconds-to-human $((time_end-time_start)); time=$ret
+    if [[ ! $time_end ]]; then
+      quecon/time
+      time_end=$REPLY
+    fi
+    quecon/string#seconds-to-human "$((time_end - time_start))"; time=$REPLY
+  elif [[ $stat == P* ]]; then
+    if quecon/string#match "$jobdir" '/([0-9]{8})-([0-9]{6})-[0-9]{2}$'; then
+      local submit_date=${BASH_REMATCH[1]::4}-${BASH_REMATCH[1]:4:2}-${BASH_REMATCH[1]:6}
+      local submit_time=${BASH_REMATCH[2]::2}:${BASH_REMATCH[2]:2:2}:${BASH_REMATCH[2]:4}
+      local time_submit=$(date -d "$submit_date $submit_time" +'%s')
+      quecon/time; local time_now=$REPLY
+
+      sgr_time=$'\e[37;90m'
+      quecon/string#seconds-to-human "$((time_now - time_submit))"; time=$REPLY
+    fi
   fi
 
   printf -v line \
-         '%04d %-18s %-10.10s %s%-6s%s %-6s %s' \
+         '%04d %-18s %-10.10s %s%-6s%s %s%-6s%s %s' \
          "$index" "$job_id" "$node" \
          "$sgr_stat" "$stat" $'\e[m' \
-         "$time" "$command"
+         "$sgr_time" "$time" $'\e[m' \
+         "$command"
 }
 
 #-----------------------------------------------------------------------------
