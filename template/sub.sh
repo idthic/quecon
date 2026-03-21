@@ -44,13 +44,15 @@ function node_stat_fail {
 
 function node_try_start {
   local inode=$1
+  if ! [[ $inode =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "bug(node_try_start): '$inode': invalid node id"  >&2
+    return 3
+  fi
 
-  if [[ $inode =~ ^[0-9]+$ ]]; then
-    local fnode
-    printf -v fnode '%s/node%03d.sh' "$QUECON_JOBDIR" "$inode"
-    if system_start_node "$fnode"; then
-      return 0
-    fi
+  local fnode
+  printf -v fnode '%s/node%03d.sh' "$QUECON_JOBDIR" "$inode"
+  if system_start_node "$fnode"; then
+    return 0
   fi
 
   # If "system_start_node" fails and no "complete.mark" is created, it implies
