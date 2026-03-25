@@ -813,10 +813,19 @@ function cmd:stat/print-help {
          '    out         Dump stdout/stderr.' \
          '    tail        Show tail of stdout/stderr.' \
          '    ls          Show files in the quecon job directory.' \
-         '    sub.sh      Show the file content.' \
-         '    cmd.sh      Show the file content.' \
-         '    job*.sh     Show the file content.' \
-         '    stat*.sh    Show the file content.' \
+         '    sub.sh' \
+         '    cmd.sh' \
+         '    node000.sh' \
+         '    stat.{log,sh}' \
+         '    sub.{out,e,o}' \
+         '    complete.mark' \
+         '                Show the file contents.' \
+         '    node000     Show the list of files in the node directory.' \
+         '    node000/work000.sh' \
+         '    node000/stat.{log,out,sh}' \
+         '    node000/count.txt' \
+         '    node000/complete.mark' \
+         '                Show the file contents.' \
          '' \
          'usage: quecon submit [-ct|-C BIN|-r REPEAT|--system SYSTEM] COMMAND' \
          'Submit jobs.' \
@@ -873,7 +882,7 @@ function cmd:stat {
   [[ $flags == *[HV]* ]] && return 0
 
   if [[ ! $id ]]; then
-    cmd:stat/list
+    cmd:stat/list | less -rXF
     return "$?"
   fi
 
@@ -881,7 +890,7 @@ function cmd:stat {
   (path)
     quecon/jobdir-eval "$id" 'quecon/print $PWD' ;;
   (''|log)
-    quecon/jobdir-eval "$id" 'cat stat.log' ;;
+    quecon/jobdir-eval "$id" 'less -XF stat.log' ;;
   (out|tail)
     local -a tail_options=()
     tail_options=()
@@ -894,13 +903,13 @@ function cmd:stat {
       [[ ! -s complete.mark && -t 1 ]] && tail_options+=(-f)
       tail "${tail_options[@]}" sub.out' ;;
   (cmd.sh|sub.sh|node[0-9]*.sh|node[0-9]*/work[0-9]*.sh)
-    quecon/jobdir-eval "$id" "cat $type" ;;
+    quecon/jobdir-eval "$id" "less -XF $type" ;;
   (stat.log|stat.sh|sub.out|sub.e|sub.o|complete.mark)
-    quecon/jobdir-eval "$id" "cat $type" ;;
+    quecon/jobdir-eval "$id" "less -XF $type" ;;
   (node[0-9]*/count.txt|node[0-9]*/stat.out|node[0-9]*/stat.log|node[0-9]*/stat.sh|node[0-9]*/complete.mark)
-    quecon/jobdir-eval "$id" "cat $type" ;;
+    quecon/jobdir-eval "$id" "less -XF $type" ;;
   (stat*.sh|job*.sh)
-    quecon/jobdir-eval "$id" "cat $type" ;;
+    quecon/jobdir-eval "$id" "less -XF $type" ;;
   (ls)
     local prefix=
     if type -P colored &>/dev/null; then
